@@ -1,0 +1,33 @@
+# Python 环境和缓存
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# PyCharm
+.idea/
+
+# 密钥和环境配置
+.env
+
+# 日志和临时文件
+*.log
+*.tmp
+
+# 训练输出和模型
+runs/
+outputs/
+checkpoints/
+*.pth
+*.pt
+*.onnx
+
+# 视频文件
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
