@@ -42,7 +42,14 @@ class Detector(object):
                 use_cpca=opt.use_cpca,
                 cpca_reduction=opt.cpca_reduction,
                 cpca_kernel_sizes=opt.cpca_kernel_sizes,
-                cpca_residual_scale=opt.cpca_residual_scale)
+                cpca_residual_scale=opt.cpca_residual_scale,
+                use_rgam=getattr(opt, 'use_rgam', False),
+                rgam_groups=getattr(opt, 'rgam_groups', 4),
+                rgam_reduction_c=getattr(opt, 'rgam_reduction_c', 16),
+                rgam_reduction_s=getattr(opt, 'rgam_reduction_s', 4),
+                rgam_spatial_size=(getattr(opt, 'resize_height', 288) // 16,
+                                   getattr(opt, 'resize_width', 288) // 16),
+                rgam_residual_scale=getattr(opt, 'rgam_residual_scale', 0.1))
             self.rgb_model = load_model(self.rgb_model, opt.rgb_model)
             self.rgb_model = DataParallel(
                 self.rgb_model, device_ids=opt.gpus,

@@ -14,7 +14,9 @@ from network.inflate_from_2d_model import inflate_from_2d_model
 # transmit parameters to class STA_Framework
 def create_model(arch, branch_info, head_conv, K, use_cpca=False,
                  cpca_reduction=16, cpca_kernel_sizes=(7, 11, 21),
-                 cpca_residual_scale=0.1):
+                 cpca_residual_scale=0.1, use_rgam=False, rgam_groups=4,
+                 rgam_reduction_c=16, rgam_reduction_s=4,
+                 rgam_spatial_size=(18, 18), rgam_residual_scale=0.1):
     num_layers = int(arch[arch.find('_') + 1:]) if '_' in arch else 0
     arch = arch[:arch.find('_')] if '_' in arch else arch
     model = STA_Framework(
@@ -26,7 +28,13 @@ def create_model(arch, branch_info, head_conv, K, use_cpca=False,
         use_cpca=use_cpca,
         cpca_reduction=cpca_reduction,
         cpca_kernel_sizes=cpca_kernel_sizes,
-        cpca_residual_scale=cpca_residual_scale)
+        cpca_residual_scale=cpca_residual_scale,
+        use_rgam=use_rgam,
+        rgam_groups=rgam_groups,
+        rgam_reduction_c=rgam_reduction_c,
+        rgam_reduction_s=rgam_reduction_s,
+        rgam_spatial_size=rgam_spatial_size,
+        rgam_residual_scale=rgam_residual_scale)
     return model
 
 

@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 import math
 import torch.nn.init as init
+from ..RGAM import ResidualRGAM
 
 __all__ = ['Res2Net', 'res2net50']
 
@@ -177,7 +178,10 @@ class ShiftModule(nn.Module):
 class Bottle2neckShift(nn.Module):
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, baseWidth=26, scale=4, n_segment = 8,stype='normal'):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, baseWidth=26, scale=4, n_segment = 8,stype='normal',
+                 use_rgam=False, rgam_groups=4, rgam_reduction_c=16,
+                 rgam_reduction_s=4, rgam_spatial_size=(18, 18),
+                 rgam_residual_scale=0.1):
         """ Constructor
         Args:
             inplanes: input channel dimensionality
@@ -227,6 +231,14 @@ class Bottle2neckShift(nn.Module):
         self.stype = stype
         self.scale = scale
         self.width = width
+        self.rgam = None
+        if use_rgam:
+            self.rgam = ResidualRGAM(
+                width * scale, groups=rgam_groups,
+                channel_reduction=rgam_reduction_c,
+                spatial_reduction=rgam_reduction_s,
+                spatial_size=rgam_spatial_size,
+                residual_scale=rgam_residual_scale)
 
     def forward(self, x):
         # import pdb; pdb.set_trace()
@@ -257,6 +269,9 @@ class Bottle2neckShift(nn.Module):
             out = torch.cat((out, last_sp), 1)
         elif self.scale != 1 and self.stype == 'stage':
             out = torch.cat((out, self.pool(last_sp)), 1)
+
+        if self.rgam is not None:
+            out = self.rgam(out)
 
         out = self.conv3(out)
         out = self.bn3(out)
@@ -351,7 +366,9 @@ class Bottle2neck(nn.Module):
 
 class IOD_TEA_Res2Net(nn.Module):
     #model = Res2Net(Bottle2neck, [3, 4, 6, 3], baseWidth = 26, scale = 4, **kwargs)
-    def __init__(self, depth,n_segment):
+    def __init__(self, depth, n_segment, use_rgam=False, rgam_groups=4,
+                 rgam_reduction_c=16, rgam_reduction_s=4,
+                 rgam_spatial_size=(18, 18), rgam_residual_scale=0.1):
         super(IOD_TEA_Res2Net, self).__init__()
 
         block = Bottle2neckShift
@@ -364,6 +381,12 @@ class IOD_TEA_Res2Net(nn.Module):
         self.inplanes = 64
         self.baseWidth = baseWidth
         self.scale = scale
+        self.use_rgam = use_rgam
+        self.rgam_groups = rgam_groups
+        self.rgam_reduction_c = rgam_reduction_c
+        self.rgam_reduction_s = rgam_reduction_s
+        self.rgam_spatial_size = rgam_spatial_size
+        self.rgam_residual_scale = rgam_residual_scale
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64)
@@ -371,7 +394,8 @@ class IOD_TEA_Res2Net(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block,128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block,256, layers[2], stride=2)
+        self.layer3 = self._make_layer(block,256, layers[2], stride=2,
+                                       rgam_last=use_rgam)
         self.layer4 = self._make_layer(block,512, layers[3], stride=2)
         self.avgpool = nn.AvgPool2d(7, stride=1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
@@ -417,7 +441,7 @@ class IOD_TEA_Res2Net(nn.Module):
                 nn.init.xavier_normal_(m.weight)
                 nn.init.constant_(m.bias, 0)
 
-    def _make_layer(self, block,planes, blocks, stride=1):
+    def _make_layer(self, block, planes, blocks, stride=1, rgam_last=False):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
@@ -427,11 +451,26 @@ class IOD_TEA_Res2Net(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample=downsample,
-            stype='stage', baseWidth = self.baseWidth, scale=self.scale,n_segment=self.n_segment))
+        layers.append(block(
+            self.inplanes, planes, stride, downsample=downsample,
+            stype='stage', baseWidth=self.baseWidth, scale=self.scale,
+            n_segment=self.n_segment, use_rgam=rgam_last and blocks == 1,
+            rgam_groups=self.rgam_groups,
+            rgam_reduction_c=self.rgam_reduction_c,
+            rgam_reduction_s=self.rgam_reduction_s,
+            rgam_spatial_size=self.rgam_spatial_size,
+            rgam_residual_scale=self.rgam_residual_scale))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, baseWidth = self.baseWidth, scale=self.scale,n_segment=self.n_segment))
+            layers.append(block(
+                self.inplanes, planes, baseWidth=self.baseWidth,
+                scale=self.scale, n_segment=self.n_segment,
+                use_rgam=rgam_last and i == blocks - 1,
+                rgam_groups=self.rgam_groups,
+                rgam_reduction_c=self.rgam_reduction_c,
+                rgam_reduction_s=self.rgam_reduction_s,
+                rgam_spatial_size=self.rgam_spatial_size,
+                rgam_residual_scale=self.rgam_residual_scale))
 
         return nn.Sequential(*layers)
 

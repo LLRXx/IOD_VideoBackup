@@ -45,6 +45,16 @@ class opts(object):
                                  help='three comma-separated odd spatial kernel sizes used by CPCA')
         self.parser.add_argument('--cpca_residual_scale', type=float, default=0.1,
                                  help='initial learnable residual scale for CPCA')
+        self.parser.add_argument('--use_rgam', action='store_true',
+                                 help='enable residual RGAM in the last block of TEA layer3')
+        self.parser.add_argument('--rgam_groups', type=int, default=4,
+                                 help='number of channel groups used by RGAM spatial attention')
+        self.parser.add_argument('--rgam_reduction_c', type=int, default=16,
+                                 help='channel reduction ratio used by RGAM RCAM')
+        self.parser.add_argument('--rgam_reduction_s', type=int, default=4,
+                                 help='axis reduction ratio used by RGAM RSAM')
+        self.parser.add_argument('--rgam_residual_scale', type=float, default=0.1,
+                                 help='residual scale for RGAM; ignored when RGAM is disabled')
 
 
         # system settings
@@ -145,6 +155,14 @@ class opts(object):
                 '--cpca_kernel_sizes requires three positive odd integers')
         if opt.cpca_reduction <= 0:
             self.parser.error('--cpca_reduction must be positive')
+        if opt.rgam_groups <= 0:
+            self.parser.error('--rgam_groups must be positive')
+        if opt.use_rgam and 416 % opt.rgam_groups != 0:
+            self.parser.error('--rgam_groups must divide TEA layer3 internal channels (416)')
+        if opt.rgam_reduction_c <= 0 or opt.rgam_reduction_s <= 0:
+            self.parser.error('--rgam_reduction_c and --rgam_reduction_s must be positive')
+        if opt.rgam_residual_scale < 0:
+            self.parser.error('--rgam_residual_scale must be non-negative')
 
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv

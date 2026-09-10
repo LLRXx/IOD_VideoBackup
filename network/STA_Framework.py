@@ -31,10 +31,21 @@ backbone = {
 class STA_Framework(nn.Module):
     def __init__(self, arch, num_layers, branch_info, head_conv, K,
                  use_cpca=False, cpca_reduction=16,
-                 cpca_kernel_sizes=(7, 11, 21), cpca_residual_scale=0.1):
+                 cpca_kernel_sizes=(7, 11, 21), cpca_residual_scale=0.1,
+                 use_rgam=False, rgam_groups=4, rgam_reduction_c=16,
+                 rgam_reduction_s=4, rgam_spatial_size=(18, 18),
+                 rgam_residual_scale=0.1):
         super(STA_Framework, self).__init__()
         self.K = K
-        self.backbone = backbone[arch](num_layers,K)
+        backbone_kwargs = {}
+        if arch == 'TEAresnet':
+            backbone_kwargs = dict(
+                use_rgam=use_rgam, rgam_groups=rgam_groups,
+                rgam_reduction_c=rgam_reduction_c,
+                rgam_reduction_s=rgam_reduction_s,
+                rgam_spatial_size=rgam_spatial_size,
+                rgam_residual_scale=rgam_residual_scale)
+        self.backbone = backbone[arch](num_layers, K, **backbone_kwargs)
         self.arch = arch
         self.use_cpca = use_cpca
         if self.use_cpca:
