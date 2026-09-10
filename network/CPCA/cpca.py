@@ -116,3 +116,93 @@ class ResidualCPCA(nn.Module):
 
     def forward(self, x):
         return x + self.residual_scale * self.cpca(x)
+
+
+class VisibilityGate(nn.Module):
+    """Predict a clip-level CPCA residual gate from K frame features.
+
+    The gate uses spatially pooled temporal mean and temporal deviation
+    descriptors.  It is intentionally label-free: the existing detection
+    losses provide the gradients through the residual path.
+    """
+
+    def __init__(self, channels, hidden_channels=32):
+        super(VisibilityGate, self).__init__()
+        if channels <= 0:
+            raise ValueError('channels must be positive')
+        if hidden_channels <= 0:
+            raise ValueError('hidden_channels must be positive')
+
+        self.mlp = nn.Sequential(
+            nn.Linear(2 * channels, hidden_channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_channels, 1))
+
+    def forward(self, features):
+        if not isinstance(features, (list, tuple)) or len(features) == 0:
+            raise ValueError('features must be a non-empty list or tuple')
+
+        stacked = torch.stack(features, dim=1)  # B, K, C, H, W
+        temporal_mean = stacked.mean(dim=1)
+        temporal_deviation = (
+            stacked - temporal_mean.unsqueeze(1)).abs().mean(dim=1)
+
+        mean_descriptor = temporal_mean.mean(dim=(2, 3))
+        deviation_descriptor = temporal_deviation.mean(dim=(2, 3))
+        descriptor = torch.cat((mean_descriptor, deviation_descriptor), dim=1)
+
+        # A sigmoid gate is broadcast over all K frames, channels and pixels.
+        return torch.sigmoid(self.mlp(descriptor)).view(-1, 1, 1, 1)
+
+
+class VisibilityAdaptiveResidualCPCA(nn.Module):
+    """Shared residual CPCA whose strength is predicted per input clip."""
+
+    def __init__(self, channels, reduction=16, kernel_sizes=(7, 11, 21),
+                 residual_scale=0.1, gate_hidden=32):
+        super(VisibilityAdaptiveResidualCPCA, self).__init__()
+        self.cpca = CPCA(channels, reduction, kernel_sizes)
+        self.visibility_gate = VisibilityGate(channels, gate_hidden)
+        self.residual_scale = nn.Parameter(
+            torch.tensor(float(residual_scale), dtype=torch.float32))
+
+    def forward(self, features, return_gate=False):
+        gate = self.visibility_gate(features)
+        refined_features = [
+            feature + self.residual_scale * gate * self.cpca(feature)
+            for feature in features
+        ]
+        if return_gate:
+            return refined_features, gate
+        return refined_features
+
+
+class OracleResidualCPCA(nn.Module):
+    """Residual CPCA with a non-learnable, externally supplied hard gate."""
+
+    def __init__(self, channels, reduction=16, kernel_sizes=(7, 11, 21),
+                 alpha=0.1):
+        super(OracleResidualCPCA, self).__init__()
+        self.cpca = CPCA(channels, reduction, kernel_sizes)
+        # A buffer is saved with the checkpoint but never exposed to the
+        # optimizer, so alpha cannot shrink to disable the CPCA branch.
+        self.register_buffer(
+            'oracle_alpha', torch.tensor(float(alpha), dtype=torch.float32))
+
+    def forward(self, features, gate, return_gate=False):
+        if gate is None:
+            raise ValueError('OracleResidualCPCA requires an oracle gate')
+        if gate.dim() == 1:
+            gate = gate.view(-1, 1, 1, 1)
+        elif gate.dim() == 2 and gate.size(1) == 1:
+            gate = gate.view(-1, 1, 1, 1)
+        elif gate.dim() != 4:
+            raise ValueError('oracle gate must have shape [B] or [B, 1, 1, 1]')
+        gate = gate.to(dtype=features[0].dtype)
+        refined_features = [
+            feature + self.oracle_alpha * gate * self.cpca(feature)
+            for feature in features
+        ]
+        if return_gate:
+            return refined_features, gate
+        return refined_features

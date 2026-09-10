@@ -56,8 +56,18 @@ def main(opt):
         use_cpca=opt.use_cpca,
         cpca_reduction=opt.cpca_reduction,
         cpca_kernel_sizes=opt.cpca_kernel_sizes,
-        cpca_residual_scale=opt.cpca_residual_scale)
-    optimizer = torch.optim.Adam(model.parameters(), opt.lr)
+        cpca_residual_scale=opt.cpca_residual_scale,
+        use_cpca_gate=opt.use_cpca_gate,
+        cpca_gate_hidden=opt.cpca_gate_hidden,
+        use_cpca_oracle_gate=opt.use_cpca_oracle_gate)
+    if opt.use_cpca_oracle_gate:
+        # Oracle scheme A freezes the baseline and learns only the CPCA
+        # adapter on vague clips; clear clips remain the baseline path.
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad = name.startswith('cpca.cpca.')
+    trainable_parameters = [
+        parameter for parameter in model.parameters() if parameter.requires_grad]
+    optimizer = torch.optim.Adam(trainable_parameters, opt.lr)
     start_epoch = opt.start_epoch
 
     #load from the imagenet pre-trained model

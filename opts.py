@@ -45,6 +45,12 @@ class opts(object):
                                  help='three comma-separated odd spatial kernel sizes used by CPCA')
         self.parser.add_argument('--cpca_residual_scale', type=float, default=0.1,
                                  help='initial learnable residual scale for CPCA')
+        self.parser.add_argument('--use_cpca_gate', action='store_true',
+                                 help='enable a clip-level MLP gate for CPCA residual strength')
+        self.parser.add_argument('--cpca_gate_hidden', type=int, default=32,
+                                 help='hidden width of the CPCA visibility gate MLP')
+        self.parser.add_argument('--use_cpca_oracle_gate', action='store_true',
+                                 help='use hard clear/vague gate from video names')
 
 
         # system settings
@@ -145,6 +151,15 @@ class opts(object):
                 '--cpca_kernel_sizes requires three positive odd integers')
         if opt.cpca_reduction <= 0:
             self.parser.error('--cpca_reduction must be positive')
+        if opt.cpca_gate_hidden <= 0:
+            self.parser.error('--cpca_gate_hidden must be positive')
+        if opt.use_cpca_gate and not opt.use_cpca:
+            self.parser.error('--use_cpca_gate requires --use_cpca')
+        if opt.use_cpca_oracle_gate and not opt.use_cpca:
+            self.parser.error('--use_cpca_oracle_gate requires --use_cpca')
+        if opt.use_cpca_gate and opt.use_cpca_oracle_gate:
+            self.parser.error(
+                '--use_cpca_gate and --use_cpca_oracle_gate are mutually exclusive')
 
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv

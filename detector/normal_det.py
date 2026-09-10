@@ -42,7 +42,11 @@ class Detector(object):
                 use_cpca=opt.use_cpca,
                 cpca_reduction=opt.cpca_reduction,
                 cpca_kernel_sizes=opt.cpca_kernel_sizes,
-                cpca_residual_scale=opt.cpca_residual_scale)
+                cpca_residual_scale=opt.cpca_residual_scale,
+                use_cpca_gate=opt.use_cpca_gate,
+                cpca_gate_hidden=opt.cpca_gate_hidden,
+                use_cpca_oracle_gate=getattr(
+                    opt, 'use_cpca_oracle_gate', False))
             self.rgb_model = load_model(self.rgb_model, opt.rgb_model)
             self.rgb_model = DataParallel(
                 self.rgb_model, device_ids=opt.gpus,
@@ -67,10 +71,14 @@ class Detector(object):
             data[i] = ((data[i] / 255.) - mean) / std
         return data
 
-    def process(self, images):
+    def process(self, images, oracle_gate=None):
         with torch.no_grad():
             if self.rgb_model is not None:
-                rgb_output  = self.rgb_model(images)
+                if getattr(self.opt, 'use_cpca_oracle_gate', False):
+                    rgb_output = self.rgb_model(
+                        images, oracle_gate=oracle_gate)
+                else:
+                    rgb_output = self.rgb_model(images)
                 hm = rgb_output[0]['hm'].sigmoid_()
                 wh = rgb_output[0]['wh']
                 STAoffset = rgb_output[0]['STA_offset']
@@ -105,11 +113,14 @@ class Detector(object):
             images = data['images']
             for i in range(len(images)):
                 images[i] = images[i].to(self.opt.device)
+        oracle_gate = data.get('oracle_gate')
+        if oracle_gate is not None:
+            oracle_gate = oracle_gate.to(self.opt.device)
 
         meta = data['meta']
         meta = {k: v.numpy()[0] for k, v in meta.items()}
 
-        detections = self.process(images)
+        detections = self.process(images, oracle_gate=oracle_gate)
 
         detections = self.post_process(detections, meta['height'], meta['width'],
                                        meta['output_height'], meta['output_width'],

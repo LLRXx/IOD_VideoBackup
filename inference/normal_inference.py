@@ -11,6 +11,7 @@ import pickle
 from opts import opts
 from datasets.init_dataset import switch_dataset
 from detector.normal_det import Detector
+from utils.oracle_gate import video_visibility
 import random
 # MODIFY FOR PYTORCH 1+
 # cv2.setNumThreads(0)
@@ -75,7 +76,10 @@ class PrefetchDataset(torch.utils.data.Dataset):
         if not os.path.isdir(os.path.dirname(outfile)):
             os.system("mkdir -p '" + os.path.dirname(outfile) + "'")
 
-        return {'outfile': outfile, 'images': images,  'meta': {'height': h, 'width': w, 'output_height': self.output_h, 'output_width': self.output_w}}
+        result = {'outfile': outfile, 'images': images,  'meta': {'height': h, 'width': w, 'output_height': self.output_h, 'output_width': self.output_w}}
+        if getattr(self.opt, 'use_cpca_oracle_gate', False):
+            result['oracle_gate'] = np.float32(video_visibility(v))
+        return result
 
     def outfile(self, v, i):
         return os.path.join(self.opt.inference_dir, v, "{:0>5}.pkl".format(i))
