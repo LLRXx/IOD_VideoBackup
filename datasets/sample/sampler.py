@@ -8,6 +8,7 @@ import cv2
 import torch.utils.data as data
 from utils.gaussian_hm import gaussian_radius, draw_umich_gaussian
 from ACT_utils.ACT_aug import apply_distort, apply_expand, crop_image
+from utils.oracle_gate import video_visibility
 
 class Sampler(data.Dataset):
     def __getitem__(self, id):
@@ -176,4 +177,6 @@ class Sampler(data.Dataset):
                 num_objs = num_objs + 1
 
         result = {'input': data, 'hm': hm, 'mov': mov,'centerKpoints': centerKpoints, 'wh': wh, 'mask': mask, 'index': index, 'index_all': index_all}
+        if getattr(self.opt, 'use_cpca_oracle_gate', False):
+            result['oracle_gate'] = np.float32(video_visibility(v))
         return result

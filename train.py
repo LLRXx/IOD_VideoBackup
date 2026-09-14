@@ -57,12 +57,23 @@ def main(opt):
         cpca_reduction=opt.cpca_reduction,
         cpca_kernel_sizes=opt.cpca_kernel_sizes,
         cpca_residual_scale=opt.cpca_residual_scale,
+        use_cpca_gate=opt.use_cpca_gate,
+        cpca_gate_hidden=opt.cpca_gate_hidden,
+        use_cpca_oracle_gate=opt.use_cpca_oracle_gate,
         use_rgam=opt.use_rgam,
         rgam_groups=opt.rgam_groups,
         rgam_reduction_c=opt.rgam_reduction_c,
         rgam_reduction_s=opt.rgam_reduction_s,
         rgam_spatial_size=(opt.resize_height // 16, opt.resize_width // 16),
         rgam_residual_scale=opt.rgam_residual_scale)
+    if opt.use_cpca_oracle_gate:
+        # Oracle scheme A freezes the baseline and learns only the CPCA
+        # adapter on vague clips; clear clips remain the baseline path.
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad = name.startswith('cpca.cpca.')
+    trainable_parameters = [
+        parameter for parameter in model.parameters() if parameter.requires_grad]
+
     optimizer = torch.optim.Adam(model.parameters(), opt.lr)
     start_epoch = opt.start_epoch
 

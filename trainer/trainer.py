@@ -7,6 +7,7 @@ from .losses import FocalLoss, RegL1Loss,STAloss,STAloss2
 
 from progress.bar import Bar
 from utils.data_parallel import DataParallel
+from utils.gate_monitor import GateStatistics
 from utils.utils import AverageMeter
 
 
@@ -17,7 +18,12 @@ class ModleWithLoss(torch.nn.Module):
         self.loss = loss
 
     def forward(self, batch):
-        [output] = self.model(batch['input'])
+        oracle_gate = batch.get('oracle_gate')
+        if oracle_gate is None:
+            [output] = self.model(batch['input'])
+        else:
+            [output] = self.model(
+                batch['input'], oracle_gate=oracle_gate)
         loss, loss_stats = self.loss(output, batch)
         return output, loss, loss_stats
 
@@ -89,18 +95,66 @@ class Trainer(object):
     def val(self, epoch, data_loader, writer):
         return self.run_epoch('val', epoch, data_loader, writer)
 
+    @staticmethod
+    def _gradient_norm(parameters):
+        squared_norm = None
+        for parameter in parameters:
+            if parameter.grad is None:
+                continue
+            value = parameter.grad.detach().float().pow(2).sum()
+            squared_norm = value if squared_norm is None else squared_norm + value
+        if squared_norm is None:
+            return 0.0
+        return squared_norm.sqrt().item()
+
+    @staticmethod
+    def _unwrap_network(model_with_loss):
+        wrapped = (model_with_loss.module
+                   if hasattr(model_with_loss, 'module') else model_with_loss)
+        return wrapped.model
+
+    def _cpca_gradient_stats(self, model_with_loss):
+        network = self._unwrap_network(model_with_loss)
+        if not (getattr(network, 'use_cpca_gate', False)
+                or getattr(network, 'use_cpca_oracle_gate', False)):
+            return {}
+        cpca_norm = self._gradient_norm(network.cpca.parameters())
+        backbone_norm = self._gradient_norm(network.backbone.parameters())
+        return {
+            'cpca_grad_norm': cpca_norm,
+            'backbone_grad_norm': backbone_norm,
+            'cpca_to_backbone_grad_ratio': (
+                cpca_norm / max(backbone_norm, 1e-12)),
+        }
+
     def run_epoch(self, phase, epoch, data_loader, writer):
         model_with_loss = self.model_with_loss
         if phase == 'train':
             model_with_loss.train()
+            network = self._unwrap_network(model_with_loss)
+            if getattr(network, 'use_cpca_oracle_gate', False):
+                # Keep all baseline BatchNorm/dropout behavior fixed while
+                # optimizing the Oracle CPCA adapter only.
+                network.backbone.eval()
+                network.branch.eval()
+                network.R2D.eval()
+                network.cpca.train()
         else:
             model_with_loss.eval()
             torch.cuda.empty_cache()
 
         opt = self.opt
         avg_loss_stats = {l: AverageMeter() for l in self.loss_stats}
+        gate_statistics = GateStatistics()
+        avg_gradient_stats = {
+            name: AverageMeter() for name in (
+                'cpca_grad_norm',
+                'backbone_grad_norm',
+                'cpca_to_backbone_grad_ratio')
+        }
         num_iters = len(data_loader)
         bar = Bar(opt.exp_id, max=num_iters)
+        monitor_interval = max(1, opt.visual_per_inter)
 
         for iter, batch in enumerate(data_loader):
             if iter >= num_iters:
@@ -114,32 +168,68 @@ class Trainer(object):
                         batch[k] = batch[k].to(device=opt.device, non_blocking=True)
 
             output, loss, loss_stats = model_with_loss(batch)
+            has_gate = gate_statistics.update_from_output(output)
 
             loss = loss.mean()
             if phase == 'train':
                 self.optimizer.zero_grad()
                 loss.backward()
+                if iter % monitor_interval == 0 or iter == num_iters - 1:
+                    gradient_stats = self._cpca_gradient_stats(model_with_loss)
+                    for name, value in gradient_stats.items():
+                        avg_gradient_stats[name].update(value)
                 self.optimizer.step()
 
             Bar.suffix = '{phase}: [{0}][{1}/{2}]|Tot: {total:} |ETA: {eta:} '.format(
                 epoch, iter, num_iters, phase=phase,
                 total=bar.elapsed_td, eta=bar.eta_td)
 
-            step = iter // opt.visual_per_inter + num_iters // opt.visual_per_inter * (epoch - 1)
+            step = (iter // monitor_interval
+                    + num_iters // monitor_interval * (epoch - 1))
 
             for l in self.loss_stats:
                 avg_loss_stats[l].update(
                     loss_stats[l].mean().item(), batch['input'][0].size(0))
 
-                if phase == 'train' and iter % opt.visual_per_inter == 0 and iter != 0:
+                if phase == 'train' and iter % monitor_interval == 0 and iter != 0:
                     writer.add_scalar('train/{}'.format(l), avg_loss_stats[l].avg, step)
                     writer.flush()
                 Bar.suffix = Bar.suffix + '|{} {:.4f} '.format(l, avg_loss_stats[l].avg)
+
+            if has_gate:
+                batch_gate = output['cpca_gate'].detach().float()
+                batch_scale = output['cpca_residual_scale'].detach().float()
+                batch_effective = batch_scale.abs() * batch_gate
+                Bar.suffix += '|gate {:.4f} |s {:.5f} |eff {:.5f} '.format(
+                    batch_gate.mean().item(),
+                    batch_scale.mean().item(),
+                    batch_effective.mean().item())
+                if phase == 'train' and iter % monitor_interval == 0:
+                    writer.add_scalar(
+                        'train/gate_batch_mean', batch_gate.mean().item(), step)
+                    writer.add_scalar(
+                        'train/gate_batch_std',
+                        batch_gate.std(unbiased=False).item(), step)
+                    writer.add_scalar(
+                        'train/cpca_residual_scale',
+                        batch_scale.mean().item(), step)
+                    writer.add_scalar(
+                        'train/cpca_effective_strength',
+                        batch_effective.mean().item(), step)
+                    for name, meter in avg_gradient_stats.items():
+                        if meter.count > 0:
+                            writer.add_scalar(
+                                'train/{}'.format(name), meter.val, step)
+                    writer.flush()
             bar.next()
             del output, loss, loss_stats
 
         bar.finish()
         ret = {k: v.avg for k, v in avg_loss_stats.items()}
+        ret.update(gate_statistics.summary())
+        for name, meter in avg_gradient_stats.items():
+            if meter.count > 0:
+                ret[name] = meter.avg
         ret['time'] = bar.elapsed_td.total_seconds() / 60.
         return ret
 
