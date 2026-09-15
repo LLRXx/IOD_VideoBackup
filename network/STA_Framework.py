@@ -37,7 +37,8 @@ class STA_Framework(nn.Module):
                  cpca_kernel_sizes=(7, 11, 21), cpca_residual_scale=0.1,
                  use_rgam=False, rgam_groups=4, rgam_reduction_c=16,
                  rgam_reduction_s=4, rgam_spatial_size=(18, 18),
-                 rgam_residual_scale=0.1, cpca_gate_hidden=32,
+                 rgam_residual_scale=0.1, use_cpca_gate=False,
+                 cpca_gate_hidden=32,
                  use_cpca_oracle_gate=False):
         super(STA_Framework, self).__init__()
         self.K = K

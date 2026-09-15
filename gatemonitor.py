@@ -152,7 +152,14 @@ def main():
         cpca_residual_scale=opt.cpca_residual_scale,
         use_cpca_gate=opt.use_cpca_gate,
         cpca_gate_hidden=opt.cpca_gate_hidden,
-        use_cpca_oracle_gate=opt.use_cpca_oracle_gate)
+        use_cpca_oracle_gate=opt.use_cpca_oracle_gate,
+        use_rgam=opt.use_rgam,
+        rgam_groups=opt.rgam_groups,
+        rgam_reduction_c=opt.rgam_reduction_c,
+        rgam_reduction_s=opt.rgam_reduction_s,
+        rgam_spatial_size=(opt.resize_height // 16,
+                           opt.resize_width // 16),
+        rgam_residual_scale=opt.rgam_residual_scale)
     model = load_model(model, checkpoint)
     model = model.to(device)
     model.eval()

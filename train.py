@@ -74,7 +74,7 @@ def main(opt):
     trainable_parameters = [
         parameter for parameter in model.parameters() if parameter.requires_grad]
 
-    optimizer = torch.optim.Adam(model.parameters(), opt.lr)
+    optimizer = torch.optim.Adam(trainable_parameters, opt.lr)
     start_epoch = opt.start_epoch
 
     #load from the imagenet pre-trained model
