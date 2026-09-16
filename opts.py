@@ -51,6 +51,8 @@ class opts(object):
                                  help='hidden width of the CPCA visibility gate MLP')
         self.parser.add_argument('--use_cpca_oracle_gate', action='store_true',
                                  help='use hard clear/vague gate from video names')
+        self.parser.add_argument('--unfreeze_oracle_baseline', action='store_true',
+                                 help='jointly fine-tune baseline, RGAM, CPCA and detection heads')
         self.parser.add_argument('--use_rgam', action='store_true',
                                  help='enable residual RGAM in the last block of TEA layer3')
         self.parser.add_argument('--rgam_groups', type=int, default=4,

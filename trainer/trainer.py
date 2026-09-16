@@ -132,7 +132,8 @@ class Trainer(object):
         if phase == 'train':
             model_with_loss.train()
             network = self._unwrap_network(model_with_loss)
-            if getattr(network, 'use_cpca_oracle_gate', False):
+            if (getattr(network, 'use_cpca_oracle_gate', False)
+                    and not getattr(self.opt, 'unfreeze_oracle_baseline', False)):
                 # Keep all baseline BatchNorm/dropout behavior fixed while
                 # optimizing the Oracle CPCA adapter only.
                 network.backbone.eval()
