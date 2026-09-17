@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
-# Train the fixed-scale Residual-SCAM adapter on top of a trained RGAM model,
-# run inference with the last checkpoint, and evaluate the three requested AP
-# metrics.  Run this script from any directory.
+# Train RGAM+SCAM from the official trained TEA baseline checkpoint with all
+# parameters unfrozen, run inference with the last checkpoint, and evaluate
+# the three requested AP metrics. The training output, including each epoch's
+# loss summary and RGAM/SCAM alpha values, is appended to the evaluation log.
+# Run this script from any directory.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,25 +21,17 @@ TRAIN_MASTER_BATCH_SIZE="${TRAIN_MASTER_BATCH_SIZE:-8}"
 INFER_BATCH_SIZE="${INFER_BATCH_SIZE:-20}"
 INFER_MASTER_BATCH_SIZE="${INFER_MASTER_BATCH_SIZE:-10}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
-TRAIN_EXP_ID="TEA_STA_RGAM_SCAM_FT_K8S1"
-ACT_MODEL_NAME="TEA_STA_RGAM_SCAM_E3_S1"
+TRAIN_EXP_ID="TEA_STA_RGAM_SCAM_ALLFT_K8S1"
+ACT_MODEL_NAME="TEA_STA_RGAM_SCAM_ALLFT_E8_S1"
+BASELINE_CHECKPOINT="${BASELINE_CHECKPOINT:-/home/yangjiao/llrx_workplace/Projects/IOD-Video/experiment/result_model/TEA_STA_K8S1/model_last.pth}"
 
-# Set this to the already trained baseline+RGAM checkpoint.
-RGAM_CHECKPOINT="${RGAM_CHECKPOINT:-}"
-
-MODEL_DIR="/home/yangjiao/llrx_workplace/Projects/IOD-Video/experiment/result_model/TEA_STA_RGAM_SCAM_FT_K8S1"
-INFERENCE_DIR="/home/yangjiao/llrx_workplace/Projects/IOD-Video/result/inference_TEA_STA_RGAM_SCAM_E3_S1"
-METRICS_NAME="TEA_STA_RGAM_SCAM_E3_S1_eval.txt"
+MODEL_DIR="/home/yangjiao/llrx_workplace/Projects/IOD-Video/experiment/result_model/TEA_STA_RGAM_SCAM_ALLFT_K8S1"
+INFERENCE_DIR="/home/yangjiao/llrx_workplace/Projects/IOD-Video/result/inference_TEA_STA_RGAM_SCAM_ALLFT_E8_S1"
+METRICS_NAME="TEA_STA_RGAM_SCAM_ALLFT_E8_S1_eval.txt"
 METRICS_LOG="/home/yangjiao/llrx_workplace/Projects/IOD-Video/result/${METRICS_NAME}"
 
 mkdir -p "/home/yangjiao/llrx_workplace/Projects/IOD-Video/result" \
          "/home/yangjiao/llrx_workplace/Projects/IOD-Video/experiment/result_model"
-
-if [[ -z "$RGAM_CHECKPOINT" || ! -f "$RGAM_CHECKPOINT" ]]; then
-    echo "Set RGAM_CHECKPOINT to an existing baseline+RGAM model_last.pth" >&2
-    echo "Example: RGAM_CHECKPOINT=../experiment/result_model/TEA_STA_RGAM/model_last.pth bash RUNSCAM.sh" >&2
-    exit 1
-fi
 
 # Remove only this run's output directory so stale frame detections cannot be
 # mixed with the new checkpoint's results.
@@ -47,9 +41,11 @@ fi
 
 : > "$METRICS_LOG"
 {
-    echo "SCAM run: $TRAIN_EXP_ID"
+    echo "RGAM+SCAM run: $TRAIN_EXP_ID"
     echo "Date: $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "RGAM checkpoint: $RGAM_CHECKPOINT"
+    echo "Initialization: official TEA baseline checkpoint"
+    echo "Baseline checkpoint: $BASELINE_CHECKPOINT"
+    echo "Training: RGAM+SCAM, all parameters unfrozen, 8 epochs"
     echo "Model directory: $MODEL_DIR"
     echo "Inference directory: $INFERENCE_DIR"
     echo
@@ -65,8 +61,13 @@ run_logged() {
     fi
 }
 
-echo "===== Train Residual-SCAM for 3 epochs =====" | tee -a "$METRICS_LOG"
-run_logged "$PYTHON_BIN" train.py \
+echo "===== Train RGAM+SCAM from official weights for 8 epochs =====" | tee -a "$METRICS_LOG"
+if [[ ! -f "$BASELINE_CHECKPOINT" ]]; then
+    echo "Official baseline checkpoint not found: $BASELINE_CHECKPOINT" | tee -a "$METRICS_LOG" >&2
+    exit 1
+fi
+
+run_logged "$PYTHON_BIN" -u train.py \
     --task train \
     --exp_id "$TRAIN_EXP_ID" \
     --K "$K" \
@@ -74,18 +75,18 @@ run_logged "$PYTHON_BIN" train.py \
     --batch_size "$TRAIN_BATCH_SIZE" \
     --master_batch_size "$TRAIN_MASTER_BATCH_SIZE" \
     --num_workers "$NUM_WORKERS" \
-    --lr 5e-4 \
-    --num_epochs 3 \
+    --lr 1e-4 \
+    --num_epochs 8 \
+    --lr_step 5,7 \
     --dataset "$DATASET" \
     --split "$SPLIT" \
     --arch "$ARCH" \
     --pretrain_model none \
-    --load_model "$RGAM_CHECKPOINT" \
+    --load_model "$BASELINE_CHECKPOINT" \
     --load_model_weights_only \
     --rgb_model "$MODEL_DIR" \
     --use_rgam \
     --use_scam \
-    --scam_only \
     --scam_reduction 16 \
     --scam_spatial_kernel 4 \
     --scam_channel_group 4 \
@@ -129,7 +130,7 @@ run_act() {
         --dataset "$DATASET"
         --split "$SPLIT"
         --model_name "$ACT_MODEL_NAME"
-        --exp_id "$METRICS_LOG"
+        --exp_id "$METRICS_NAME"
     )
     if [[ -n "$threshold" ]]; then
         args+=(--th "$threshold")

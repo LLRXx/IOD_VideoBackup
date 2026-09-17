@@ -18,6 +18,30 @@ import tensorboardX
 
 GLOBAL_SEED = 317
 
+
+def _residual_scale_values(model, suffix):
+    """Return scalar residual-scale parameters whose names end with suffix."""
+    values = []
+    for name, parameter in model.named_parameters():
+        if name.endswith(suffix):
+            values.append((name, float(parameter.detach().cpu().item())))
+    return values
+
+
+def _print_epoch_summary(epoch, train_metrics, model):
+    """Print epoch losses and the current RGAM/SCAM residual scales."""
+    metrics = ' '.join(
+        '{}={:.6f}'.format(name, value)
+        for name, value in train_metrics.items())
+    rgam_scales = _residual_scale_values(model, 'rgam.residual_scale')
+    scam_scales = _residual_scale_values(model, 'scam.residual_scale')
+    rgam_text = ', '.join(
+        '{}={:.6f}'.format(name, value) for name, value in rgam_scales) or 'none'
+    scam_text = ', '.join(
+        '{}={:.6f}'.format(name, value) for name, value in scam_scales) or 'none'
+    print('[Epoch {}] train_metrics: {} | RGAM alpha: {} | SCAM alpha: {}'.format(
+        epoch, metrics, rgam_text, scam_text), flush=True)
+
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -132,6 +156,7 @@ def main(opt):
             logger.scalar_summary('epcho/{}'.format(k), v, epoch, 'train')
             logger.write('train: {} {:8f} | '.format(k, v))
         logger.write('\n')
+        _print_epoch_summary(epoch, log_dict_train, model)
 
         # save the model
         if opt.save_all:

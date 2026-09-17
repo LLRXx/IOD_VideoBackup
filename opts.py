@@ -46,7 +46,7 @@ class opts(object):
         self.parser.add_argument('--cpca_residual_scale', type=float, default=0.1,
                                  help='initial learnable residual scale for CPCA')
         self.parser.add_argument('--use_scam', action='store_true',
-                                 help='enable fixed-scale residual SCAM after the backbone')
+                                 help='enable residual SCAM after the backbone')
         self.parser.add_argument('--scam_only', action='store_true',
                                  help='freeze backbone and IOD_Branch; train only SCAM')
         self.parser.add_argument('--scam_reduction', type=int, default=16,
@@ -56,7 +56,7 @@ class opts(object):
         self.parser.add_argument('--scam_channel_group', type=int, default=4,
                                  help='local channel group size used by SCAM')
         self.parser.add_argument('--scam_residual_scale', type=float, default=0.1,
-                                 help='fixed residual scale used by SCAM')
+                                 help='initial learnable residual scale used by SCAM')
         self.parser.add_argument('--scam_epochs', type=int, default=3,
                                  help='number of epochs for SCAM-only fine-tuning')
         self.parser.add_argument('--use_rgam', action='store_true',

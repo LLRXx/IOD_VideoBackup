@@ -1,8 +1,8 @@
 """Spatial Channel Attention Module (SCAM).
 
 This implementation follows the two sequential attention blocks described in
-SCAM-P and wraps them in a fixed-scale residual branch for safe adaptation of
-an already trained detector.
+SCAM-P and wraps them in an identity-preserving residual branch.  The residual
+scale is learnable and initialized from the configured value.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -71,7 +71,7 @@ class SCAM(nn.Module):
 
 
 class ResidualSCAM(nn.Module):
-    """Identity-preserving SCAM branch with a fixed residual scale."""
+    """Identity-preserving SCAM branch with a learnable residual scale."""
 
     def __init__(self, channels, reduction=16, spatial_kernel=4,
                  channel_group=4, residual_scale=0.1):
@@ -81,8 +81,8 @@ class ResidualSCAM(nn.Module):
         self.scam = SCAM(
             channels, reduction=reduction,
             spatial_kernel=spatial_kernel, channel_group=channel_group)
-        self.register_buffer(
-            'residual_scale', torch.tensor(float(residual_scale)))
+        self.residual_scale = nn.Parameter(
+            torch.tensor(float(residual_scale), dtype=torch.float32))
 
     def forward(self, x):
         return x + self.residual_scale * self.scam(x)
