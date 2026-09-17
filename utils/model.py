@@ -16,7 +16,10 @@ def create_model(arch, branch_info, head_conv, K, use_cpca=False,
                  cpca_reduction=16, cpca_kernel_sizes=(7, 11, 21),
                  cpca_residual_scale=0.1, use_rgam=False, rgam_groups=4,
                  rgam_reduction_c=16, rgam_reduction_s=4,
-                 rgam_spatial_size=(18, 18), rgam_residual_scale=0.1):
+                 rgam_spatial_size=(18, 18), rgam_residual_scale=0.1,
+                 use_scam=False, scam_reduction=16,
+                 scam_spatial_kernel=4, scam_channel_group=4,
+                 scam_residual_scale=0.1, scam_only=False):
     num_layers = int(arch[arch.find('_') + 1:]) if '_' in arch else 0
     arch = arch[:arch.find('_')] if '_' in arch else arch
     model = STA_Framework(
@@ -29,6 +32,12 @@ def create_model(arch, branch_info, head_conv, K, use_cpca=False,
         cpca_reduction=cpca_reduction,
         cpca_kernel_sizes=cpca_kernel_sizes,
         cpca_residual_scale=cpca_residual_scale,
+        use_scam=use_scam,
+        scam_reduction=scam_reduction,
+        scam_spatial_kernel=scam_spatial_kernel,
+        scam_channel_group=scam_channel_group,
+        scam_residual_scale=scam_residual_scale,
+        scam_only=scam_only,
         use_rgam=use_rgam,
         rgam_groups=rgam_groups,
         rgam_reduction_c=rgam_reduction_c,

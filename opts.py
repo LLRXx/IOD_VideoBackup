@@ -45,6 +45,20 @@ class opts(object):
                                  help='three comma-separated odd spatial kernel sizes used by CPCA')
         self.parser.add_argument('--cpca_residual_scale', type=float, default=0.1,
                                  help='initial learnable residual scale for CPCA')
+        self.parser.add_argument('--use_scam', action='store_true',
+                                 help='enable fixed-scale residual SCAM after the backbone')
+        self.parser.add_argument('--scam_only', action='store_true',
+                                 help='freeze backbone and IOD_Branch; train only SCAM')
+        self.parser.add_argument('--scam_reduction', type=int, default=16,
+                                 help='channel reduction ratio used by SCAM')
+        self.parser.add_argument('--scam_spatial_kernel', type=int, default=4,
+                                 help='non-overlapping spatial pooling kernel used by SCAM')
+        self.parser.add_argument('--scam_channel_group', type=int, default=4,
+                                 help='local channel group size used by SCAM')
+        self.parser.add_argument('--scam_residual_scale', type=float, default=0.1,
+                                 help='fixed residual scale used by SCAM')
+        self.parser.add_argument('--scam_epochs', type=int, default=3,
+                                 help='number of epochs for SCAM-only fine-tuning')
         self.parser.add_argument('--use_rgam', action='store_true',
                                  help='enable residual RGAM in the last block of TEA layer3')
         self.parser.add_argument('--rgam_groups', type=int, default=4,
@@ -155,6 +169,20 @@ class opts(object):
                 '--cpca_kernel_sizes requires three positive odd integers')
         if opt.cpca_reduction <= 0:
             self.parser.error('--cpca_reduction must be positive')
+        if opt.scam_reduction <= 0:
+            self.parser.error('--scam_reduction must be positive')
+        if opt.scam_spatial_kernel <= 0:
+            self.parser.error('--scam_spatial_kernel must be positive')
+        if opt.scam_channel_group <= 0 or 64 % opt.scam_channel_group != 0:
+            self.parser.error('--scam_channel_group must be a positive divisor of 64')
+        if opt.scam_residual_scale < 0:
+            self.parser.error('--scam_residual_scale must be non-negative')
+        if opt.scam_epochs <= 0:
+            self.parser.error('--scam_epochs must be positive')
+        if opt.scam_only and not opt.use_scam:
+            self.parser.error('--scam_only requires --use_scam')
+        if opt.use_scam and opt.scam_only:
+            opt.num_epochs = opt.scam_epochs
         if opt.rgam_groups <= 0:
             self.parser.error('--rgam_groups must be positive')
         if opt.use_rgam and 416 % opt.rgam_groups != 0:

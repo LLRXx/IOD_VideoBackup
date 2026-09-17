@@ -5,6 +5,7 @@ import torch
 from torch import nn
 from .branch import IOD_Branch
 from .CPCA import ResidualCPCA
+from .SCAM import ResidualSCAM
 from .resnet import IOD_ResNet
 from .threed_models.i3d_resnet import IOD_I3D_ResNet
 from .threed_models.s3d_resnet import IOD_S3D_ResNet
@@ -32,6 +33,9 @@ class STA_Framework(nn.Module):
     def __init__(self, arch, num_layers, branch_info, head_conv, K,
                  use_cpca=False, cpca_reduction=16,
                  cpca_kernel_sizes=(7, 11, 21), cpca_residual_scale=0.1,
+                 use_scam=False, scam_reduction=16,
+                 scam_spatial_kernel=4, scam_channel_group=4,
+                 scam_residual_scale=0.1, scam_only=False,
                  use_rgam=False, rgam_groups=4, rgam_reduction_c=16,
                  rgam_reduction_s=4, rgam_spatial_size=(18, 18),
                  rgam_residual_scale=0.1):
@@ -54,6 +58,15 @@ class STA_Framework(nn.Module):
                 reduction=cpca_reduction,
                 kernel_sizes=cpca_kernel_sizes,
                 residual_scale=cpca_residual_scale)
+        self.use_scam = use_scam
+        self.scam_only = bool(scam_only and use_scam)
+        if self.use_scam:
+            self.scam = ResidualSCAM(
+                self.backbone.output_channel,
+                reduction=scam_reduction,
+                spatial_kernel=scam_spatial_kernel,
+                channel_group=scam_channel_group,
+                residual_scale=scam_residual_scale)
         self.branch = IOD_Branch(self.backbone.output_channel, arch, head_conv, branch_info, K)
         self.R2D  = nn.Sequential(
             nn.Conv2d(K * self.backbone.output_channel, self.backbone.output_channel,
@@ -61,11 +74,36 @@ class STA_Framework(nn.Module):
             nn.ReLU(inplace=True))
 
     def _refine_chunk(self, chunk):
-        if not self.use_cpca:
-            return chunk
-        # A single CPCA instance is reused for every frame, so all K frames
-        # share the same attention parameters.
-        return [self.cpca(feature) for feature in chunk]
+        if self.use_cpca:
+            # A single CPCA instance is reused for every frame, so all K frames
+            # share the same attention parameters.  CPCA remains optional and
+            # is not used by the SCAM-only experiment.
+            chunk = [self.cpca(feature) for feature in chunk]
+        if self.use_scam:
+            # Share one SCAM instance across all K frame features.
+            chunk = [self.scam(feature) for feature in chunk]
+        return chunk
+
+    def freeze_scam_only(self):
+        """Freeze backbone and IOD_Branch, leaving only SCAM trainable."""
+        if not self.use_scam:
+            raise RuntimeError('SCAM-only fine-tuning requires use_scam=True')
+        for parameter in self.parameters():
+            parameter.requires_grad = False
+        for parameter in self.scam.parameters():
+            parameter.requires_grad = True
+        self.scam_only = True
+        self.backbone.eval()
+        self.branch.eval()
+
+    def train(self, mode=True):
+        # Trainer calls train() on the complete wrapper every epoch. Re-apply
+        # eval mode here so frozen backbone BatchNorm statistics do not drift.
+        super(STA_Framework, self).train(mode)
+        if mode and self.scam_only:
+            self.backbone.eval()
+            self.branch.eval()
+        return self
 
     def forward(self, input):
         if self.arch == 'I3Dresnet' or self.arch ==  'S3Dresnet' or self.arch =='TAMresnet' or self.arch ==  'MSresnet' or \

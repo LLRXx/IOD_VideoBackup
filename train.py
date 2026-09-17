@@ -57,6 +57,12 @@ def main(opt):
         cpca_reduction=opt.cpca_reduction,
         cpca_kernel_sizes=opt.cpca_kernel_sizes,
         cpca_residual_scale=opt.cpca_residual_scale,
+        use_scam=opt.use_scam,
+        scam_reduction=opt.scam_reduction,
+        scam_spatial_kernel=opt.scam_spatial_kernel,
+        scam_channel_group=opt.scam_channel_group,
+        scam_residual_scale=opt.scam_residual_scale,
+        scam_only=opt.scam_only,
         use_rgam=opt.use_rgam,
         rgam_groups=opt.rgam_groups,
         rgam_reduction_c=opt.rgam_reduction_c,
@@ -74,10 +80,16 @@ def main(opt):
 
     #load from the already trained model
     if opt.load_model != '':
-        if opt.load_model_weights_only:
+        if opt.load_model_weights_only or opt.scam_only:
             model = load_model(model, opt.load_model)
         else:
             model, optimizer, _, _ = load_model(model, opt.load_model, optimizer, opt.lr)
+
+    if opt.scam_only:
+        model.freeze_scam_only()
+        optimizer = torch.optim.Adam(
+            (parameter for parameter in model.parameters()
+             if parameter.requires_grad), opt.lr)
 
     #Trainer Class
     trainer = Trainer(opt, model, optimizer)
