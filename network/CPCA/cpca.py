@@ -178,16 +178,15 @@ class VisibilityAdaptiveResidualCPCA(nn.Module):
 
 
 class OracleResidualCPCA(nn.Module):
-    """Residual CPCA with a non-learnable, externally supplied hard gate."""
+    """Residual CPCA with an externally supplied hard gate."""
 
     def __init__(self, channels, reduction=16, kernel_sizes=(7, 11, 21),
                  alpha=0.1):
         super(OracleResidualCPCA, self).__init__()
         self.cpca = CPCA(channels, reduction, kernel_sizes)
-        # A buffer is saved with the checkpoint but never exposed to the
-        # optimizer, so alpha cannot shrink to disable the CPCA branch.
-        self.register_buffer(
-            'oracle_alpha', torch.tensor(float(alpha), dtype=torch.float32))
+        # Alpha starts at the configured value and is optimized with CPCA.
+        self.oracle_alpha = nn.Parameter(
+            torch.tensor(float(alpha), dtype=torch.float32))
 
     def forward(self, features, gate, return_gate=False):
         if gate is None:

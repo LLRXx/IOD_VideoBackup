@@ -70,7 +70,7 @@ def main(opt):
         # Oracle scheme A freezes the baseline and learns only the CPCA
         # adapter on vague clips; clear clips remain the baseline path.
         for name, parameter in model.named_parameters():
-            parameter.requires_grad = name.startswith('cpca.cpca.')
+            parameter.requires_grad = name.startswith('cpca.')
     trainable_parameters = [
         parameter for parameter in model.parameters() if parameter.requires_grad]
 
