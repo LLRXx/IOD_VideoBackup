@@ -78,6 +78,7 @@ run_logged "$PYTHON_BIN" -u train.py \
     --lr 1e-4 \
     --num_epochs 8 \
     --lr_step 5,7 \
+    --save_all \
     --dataset "$DATASET" \
     --split "$SPLIT" \
     --arch "$ARCH" \
@@ -92,13 +93,20 @@ run_logged "$PYTHON_BIN" -u train.py \
     --scam_channel_group 4 \
     --scam_residual_scale 0.1
 
-LAST_CHECKPOINT="$MODEL_DIR/model_last.pth"
-if [[ ! -f "$LAST_CHECKPOINT" ]]; then
-    echo "Last checkpoint not found after training: $LAST_CHECKPOINT" | tee -a "$METRICS_LOG" >&2
+# With --save_all, train.py writes model_[epoch]_<timestamp>.pth rather than
+# model_last.pth. Select the newest completed epoch-8 checkpoint for inference.
+LAST_CHECKPOINT="$({
+    find "$MODEL_DIR" -maxdepth 1 -type f \
+        -name 'model_\[8\]_*.pth' -printf '%T@ %p\n' 2>/dev/null \
+        | sort -nr | head -n 1 | cut -d' ' -f2-
+})"
+if [[ -z "$LAST_CHECKPOINT" || ! -f "$LAST_CHECKPOINT" ]]; then
+    echo "Epoch-8 checkpoint not found in: $MODEL_DIR" | tee -a "$METRICS_LOG" >&2
     exit 1
 fi
+echo "Selected epoch-8 checkpoint: $LAST_CHECKPOINT" | tee -a "$METRICS_LOG"
 
-echo "===== Inference with the last checkpoint =====" | tee -a "$METRICS_LOG"
+echo "===== Inference with the epoch-8 checkpoint =====" | tee -a "$METRICS_LOG"
 run_logged "$PYTHON_BIN" det.py \
     --task normal \
     --exp_id "${ACT_MODEL_NAME}_det" \
