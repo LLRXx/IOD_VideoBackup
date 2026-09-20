@@ -34,15 +34,7 @@ class Detector(object):
         self.rgb_model = None
         if opt.rgb_model != '':
             print('create rgb model')
-            self.rgb_model = create_model(
-                opt.arch,
-                opt.branch_info,
-                opt.head_conv,
-                opt.K,
-                use_cpca=opt.use_cpca,
-                cpca_reduction=opt.cpca_reduction,
-                cpca_kernel_sizes=opt.cpca_kernel_sizes,
-                cpca_residual_scale=opt.cpca_residual_scale)
+            self.rgb_model = create_model(opt.arch, opt.branch_info, opt.head_conv, opt.K)
             self.rgb_model = load_model(self.rgb_model, opt.rgb_model)
             self.rgb_model = DataParallel(
                 self.rgb_model, device_ids=opt.gpus,

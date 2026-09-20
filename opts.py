@@ -37,16 +37,6 @@ class opts(object):
                                  help='output stride. Currently only supports 4.')
         self.parser.add_argument('--K', type=int, default=8,
                                  help='length of action tube')
-        self.parser.add_argument('--use_cpca', action='store_true',
-                                 help='enable shared residual CPCA on each fused frame feature')
-        self.parser.add_argument('--cpca_reduction', type=int, default=16,
-                                 help='channel reduction ratio used by CPCA')
-        self.parser.add_argument('--cpca_kernel_sizes', default='7,11,21',
-                                 help='three comma-separated odd spatial kernel sizes used by CPCA')
-        self.parser.add_argument('--cpca_residual_scale', type=float, default=0.1,
-                                 help='initial learnable residual scale for CPCA')
-
-
         # system settings
         self.parser.add_argument('--gpus', default='0,1',
                                  help='visible gpu list, use comma for multiple gpus')
@@ -136,16 +126,6 @@ class opts(object):
         opt.gpus = [int(gpu) for gpu in opt.gpus.split(',')]
         opt.gpus = [i for i in range(len(opt.gpus))] if opt.gpus[0] >= 0 else [-1]
         opt.lr_step = [int(i) for i in opt.lr_step.split(',')]
-        opt.cpca_kernel_sizes = tuple(
-            int(kernel_size) for kernel_size in opt.cpca_kernel_sizes.split(','))
-        if len(opt.cpca_kernel_sizes) != 3 or any(
-                kernel_size <= 0 or kernel_size % 2 == 0
-                for kernel_size in opt.cpca_kernel_sizes):
-            self.parser.error(
-                '--cpca_kernel_sizes requires three positive odd integers')
-        if opt.cpca_reduction <= 0:
-            self.parser.error('--cpca_reduction must be positive')
-
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv
         elif 'dla' in opt.arch:

@@ -12,21 +12,10 @@ from network.inflate_from_2d_model import inflate_from_2d_model
 
 
 # transmit parameters to class STA_Framework
-def create_model(arch, branch_info, head_conv, K, use_cpca=False,
-                 cpca_reduction=16, cpca_kernel_sizes=(7, 11, 21),
-                 cpca_residual_scale=0.1):
+def create_model(arch, branch_info, head_conv, K):
     num_layers = int(arch[arch.find('_') + 1:]) if '_' in arch else 0
     arch = arch[:arch.find('_')] if '_' in arch else arch
-    model = STA_Framework(
-        arch,
-        num_layers,
-        branch_info,
-        head_conv,
-        K,
-        use_cpca=use_cpca,
-        cpca_reduction=cpca_reduction,
-        cpca_kernel_sizes=cpca_kernel_sizes,
-        cpca_residual_scale=cpca_residual_scale)
+    model = STA_Framework(arch, num_layers, branch_info, head_conv, K)
     return model
 
 
