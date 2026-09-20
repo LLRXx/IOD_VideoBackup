@@ -39,7 +39,11 @@ def configure_dpdf_only_training(model):
     """
     trainable_names = []
     for name, parameter in model.named_parameters():
-        parameter.requires_grad = '.dpdf.' in name
+        # ``STA_Framework`` registers the block at the root as
+        # ``dpdf.<parameter>``.  Checking for ``.dpdf.`` alone misses that
+        # valid root-level spelling and leaves the optimizer with no params.
+        name_parts = name.split('.')
+        parameter.requires_grad = 'dpdf' in name_parts
         if parameter.requires_grad:
             trainable_names.append(name)
 
@@ -52,6 +56,8 @@ def configure_dpdf_only_training(model):
         if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
             module.eval()
 
+    print('DPDF-only training enabled; trainable parameter count: {}'.format(
+        len(trainable_names)))
     print('DPDF-only training enabled; trainable parameters:')
     for name in trainable_names:
         print('  ' + name)
