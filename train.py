@@ -48,7 +48,17 @@ def main(opt):
     opt.device = torch.device('cuda' if opt.gpus[0] >= 0 else 'cpu')
 
     #model define
-    model = create_model(opt.arch, opt.branch_info, opt.head_conv, opt.K)
+    model = create_model(
+        opt.arch,
+        opt.branch_info,
+        opt.head_conv,
+        opt.K,
+        use_dpdf=opt.use_dpdf,
+        dpdf_heads=opt.dpdf_heads,
+        dpdf_branch_channels=opt.dpdf_branch_channels,
+        dpdf_deform_kernel=opt.dpdf_deform_kernel,
+        dpdf_dilation_rates=opt.dpdf_dilation_rates,
+    )
     optimizer = torch.optim.Adam(model.parameters(), opt.lr)
     start_epoch = opt.start_epoch
 

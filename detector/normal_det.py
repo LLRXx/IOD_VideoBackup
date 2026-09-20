@@ -34,7 +34,18 @@ class Detector(object):
         self.rgb_model = None
         if opt.rgb_model != '':
             print('create rgb model')
-            self.rgb_model = create_model(opt.arch, opt.branch_info, opt.head_conv, opt.K)
+            self.rgb_model = create_model(
+                opt.arch,
+                opt.branch_info,
+                opt.head_conv,
+                opt.K,
+                use_dpdf=getattr(opt, 'use_dpdf', False),
+                dpdf_heads=getattr(opt, 'dpdf_heads', 4),
+                dpdf_branch_channels=getattr(opt, 'dpdf_branch_channels', 16),
+                dpdf_deform_kernel=getattr(opt, 'dpdf_deform_kernel', 5),
+                dpdf_dilation_rates=getattr(
+                    opt, 'dpdf_dilation_rates', (1, 6, 12, 18)),
+            )
             self.rgb_model = load_model(self.rgb_model, opt.rgb_model)
             self.rgb_model = DataParallel(
                 self.rgb_model, device_ids=opt.gpus,

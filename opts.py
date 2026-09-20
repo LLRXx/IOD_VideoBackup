@@ -37,6 +37,16 @@ class opts(object):
                                  help='output stride. Currently only supports 4.')
         self.parser.add_argument('--K', type=int, default=8,
                                  help='length of action tube')
+        self.parser.add_argument('--use_dpdf', action='store_true',
+                                 help='enable shared DPDF attention after 64-channel fusion')
+        self.parser.add_argument('--dpdf_heads', type=int, default=4,
+                                 help='number of channel-attention heads in DPDF')
+        self.parser.add_argument('--dpdf_branch_channels', type=int, default=16,
+                                 help='per-branch channels used by the lightweight SASPP')
+        self.parser.add_argument('--dpdf_deform_kernel', type=int, default=5,
+                                 help='kernel size of the DPDF pre-SASPP deformable convolution')
+        self.parser.add_argument('--dpdf_dilation_rates', default='1,6,12,18',
+                                 help='comma-separated SASPP deformable dilation rates')
         # system settings
         self.parser.add_argument('--gpus', default='0,1',
                                  help='visible gpu list, use comma for multiple gpus')
@@ -126,6 +136,17 @@ class opts(object):
         opt.gpus = [int(gpu) for gpu in opt.gpus.split(',')]
         opt.gpus = [i for i in range(len(opt.gpus))] if opt.gpus[0] >= 0 else [-1]
         opt.lr_step = [int(i) for i in opt.lr_step.split(',')]
+        opt.dpdf_dilation_rates = tuple(
+            int(rate) for rate in opt.dpdf_dilation_rates.split(','))
+        if opt.dpdf_heads <= 0 or 64 % opt.dpdf_heads != 0:
+            self.parser.error('--dpdf_heads must be a positive divisor of 64')
+        if opt.dpdf_branch_channels <= 0:
+            self.parser.error('--dpdf_branch_channels must be positive')
+        if opt.dpdf_deform_kernel <= 0 or opt.dpdf_deform_kernel % 2 == 0:
+            self.parser.error('--dpdf_deform_kernel must be a positive odd integer')
+        if len(opt.dpdf_dilation_rates) != 4 or any(
+                rate <= 0 for rate in opt.dpdf_dilation_rates):
+            self.parser.error('--dpdf_dilation_rates requires four positive integers')
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv
         elif 'dla' in opt.arch:
