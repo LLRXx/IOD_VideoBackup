@@ -47,6 +47,8 @@ class opts(object):
                                  help='kernel size of the DPDF pre-SASPP deformable convolution')
         self.parser.add_argument('--dpdf_dilation_rates', default='1,6,12,18',
                                  help='comma-separated SASPP deformable dilation rates')
+        self.parser.add_argument('--train_dpdf_only', action='store_true',
+                                 help='freeze backbone, detection head and BN; train only DPDF parameters')
         # system settings
         self.parser.add_argument('--gpus', default='0,1',
                                  help='visible gpu list, use comma for multiple gpus')
@@ -147,6 +149,8 @@ class opts(object):
         if len(opt.dpdf_dilation_rates) != 4 or any(
                 rate <= 0 for rate in opt.dpdf_dilation_rates):
             self.parser.error('--dpdf_dilation_rates requires four positive integers')
+        if opt.train_dpdf_only and not opt.use_dpdf:
+            self.parser.error('--train_dpdf_only requires --use_dpdf')
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv
         elif 'dla' in opt.arch:

@@ -29,6 +29,35 @@ def set_seed(seed):
 def worker_init_fn(dump):
     set_seed(GLOBAL_SEED)
 
+
+def configure_dpdf_only_training(model):
+    """Freeze the baseline and expose only the inserted DPDF to Adam.
+
+    Frozen BatchNorm layers are kept in eval mode because ``requires_grad``
+    does not stop running-statistics updates.  This keeps the official
+    baseline feature statistics fixed during the DPDF-only ablation.
+    """
+    trainable_names = []
+    for name, parameter in model.named_parameters():
+        parameter.requires_grad = '.dpdf.' in name
+        if parameter.requires_grad:
+            trainable_names.append(name)
+
+    if not trainable_names:
+        raise RuntimeError(
+            '--train_dpdf_only was requested, but no DPDF parameters were found. '
+            'Make sure --use_dpdf is enabled.')
+
+    for module in model.modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.eval()
+
+    print('DPDF-only training enabled; trainable parameters:')
+    for name in trainable_names:
+        print('  ' + name)
+    return trainable_names
+
+
 def main(opt):
     set_seed(opt.seed)
     torch.backends.cudnn.benchmark = True
@@ -59,7 +88,7 @@ def main(opt):
         dpdf_deform_kernel=opt.dpdf_deform_kernel,
         dpdf_dilation_rates=opt.dpdf_dilation_rates,
     )
-    optimizer = torch.optim.Adam(model.parameters(), opt.lr)
+    optimizer = None
     start_epoch = opt.start_epoch
 
     #load from the imagenet pre-trained model
@@ -70,10 +99,23 @@ def main(opt):
 
     #load from the already trained model
     if opt.load_model != '':
-        if opt.load_model_weights_only:
+        if opt.load_model_weights_only or opt.train_dpdf_only:
             model = load_model(model, opt.load_model)
         else:
+            optimizer = torch.optim.Adam(model.parameters(), opt.lr)
             model, optimizer, _, _ = load_model(model, opt.load_model, optimizer, opt.lr)
+
+    if opt.train_dpdf_only:
+        configure_dpdf_only_training(model)
+
+    if optimizer is None:
+        if opt.train_dpdf_only:
+            optimizer_parameters = (
+                parameter for parameter in model.parameters()
+                if parameter.requires_grad)
+            optimizer = torch.optim.Adam(optimizer_parameters, opt.lr)
+        else:
+            optimizer = torch.optim.Adam(model.parameters(), opt.lr)
 
     #Trainer Class
     trainer = Trainer(opt, model, optimizer)
