@@ -18,6 +18,34 @@ import tensorboardX
 
 GLOBAL_SEED = 317
 
+
+def configure_rgam_only_training(model):
+    """Freeze the original model and expose only the inserted RGAM to Adam.
+
+    BatchNorm buffers are not controlled by ``requires_grad``.  Keep every
+    frozen BatchNorm in eval mode so that this ablation does not change the
+    official baseline feature statistics while RGAM is trained.
+    """
+    trainable_names = []
+    for name, parameter in model.named_parameters():
+        parameter.requires_grad = '.rgam.' in name
+        if parameter.requires_grad:
+            trainable_names.append(name)
+
+    if not trainable_names:
+        raise RuntimeError(
+            '--train_rgam_only was requested, but no RGAM parameters were found. '
+            'Make sure --use_rgam is enabled and the TEA architecture is used.')
+
+    for module in model.modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.eval()
+
+    print('RGAM-only training enabled; trainable parameters:')
+    for name in trainable_names:
+        print('  ' + name)
+    return trainable_names
+
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -63,7 +91,7 @@ def main(opt):
         rgam_reduction_s=opt.rgam_reduction_s,
         rgam_spatial_size=(opt.resize_height // 16, opt.resize_width // 16),
         rgam_residual_scale=opt.rgam_residual_scale)
-    optimizer = torch.optim.Adam(model.parameters(), opt.lr)
+    optimizer = None
     start_epoch = opt.start_epoch
 
     #load from the imagenet pre-trained model
@@ -77,7 +105,16 @@ def main(opt):
         if opt.load_model_weights_only:
             model = load_model(model, opt.load_model)
         else:
+            optimizer = torch.optim.Adam(model.parameters(), opt.lr)
             model, optimizer, _, _ = load_model(model, opt.load_model, optimizer, opt.lr)
+
+    if opt.train_rgam_only:
+        configure_rgam_only_training(model)
+
+    if opt.train_rgam_only or optimizer is None:
+        optimizer_parameters = (parameter for parameter in model.parameters()
+                                if parameter.requires_grad)
+        optimizer = torch.optim.Adam(optimizer_parameters, opt.lr)
 
     #Trainer Class
     trainer = Trainer(opt, model, optimizer)

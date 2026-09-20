@@ -93,6 +93,13 @@ class Trainer(object):
         model_with_loss = self.model_with_loss
         if phase == 'train':
             model_with_loss.train()
+            if self.opt.train_rgam_only:
+                # ``train()`` recursively switches every module back to train
+                # mode.  Re-apply eval mode to frozen BatchNorm layers so
+                # their running statistics remain identical to the baseline.
+                for module in model_with_loss.modules():
+                    if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                        module.eval()
         else:
             model_with_loss.eval()
             torch.cuda.empty_cache()

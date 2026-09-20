@@ -55,6 +55,8 @@ class opts(object):
                                  help='axis reduction ratio used by RGAM RSAM')
         self.parser.add_argument('--rgam_residual_scale', type=float, default=0.1,
                                  help='residual scale for RGAM; ignored when RGAM is disabled')
+        self.parser.add_argument('--train_rgam_only', action='store_true',
+                                 help='freeze the baseline backbone and detection head; train only RGAM parameters')
 
 
         # system settings
@@ -159,6 +161,8 @@ class opts(object):
             self.parser.error('--rgam_groups must be positive')
         if opt.use_rgam and 416 % opt.rgam_groups != 0:
             self.parser.error('--rgam_groups must divide TEA layer3 internal channels (416)')
+        if opt.train_rgam_only and not opt.use_rgam:
+            self.parser.error('--train_rgam_only requires --use_rgam')
         if opt.rgam_reduction_c <= 0 or opt.rgam_reduction_s <= 0:
             self.parser.error('--rgam_reduction_c and --rgam_reduction_s must be positive')
         if opt.rgam_residual_scale < 0:
