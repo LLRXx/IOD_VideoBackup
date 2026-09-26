@@ -93,6 +93,8 @@ def main(opt):
         dpdf_branch_channels=opt.dpdf_branch_channels,
         dpdf_deform_kernel=opt.dpdf_deform_kernel,
         dpdf_dilation_rates=opt.dpdf_dilation_rates,
+        dpdf_temporal=opt.dpdf_temporal,
+        dpdf_temporal_align=opt.dpdf_temporal_align,
     )
     optimizer = None
     start_epoch = opt.start_epoch

@@ -45,6 +45,9 @@ class Detector(object):
                 dpdf_deform_kernel=getattr(opt, 'dpdf_deform_kernel', 5),
                 dpdf_dilation_rates=getattr(
                     opt, 'dpdf_dilation_rates', (1, 6, 12, 18)),
+                dpdf_temporal=getattr(opt, 'dpdf_temporal', False),
+                dpdf_temporal_align=getattr(
+                    opt, 'dpdf_temporal_align', False),
             )
             self.rgb_model = load_model(self.rgb_model, opt.rgb_model)
             self.rgb_model = DataParallel(

@@ -63,8 +63,49 @@ class _DeformConvBranch(nn.Module):
         nn.init.zeros_(self.offset.weight)
         nn.init.zeros_(self.offset.bias)
 
-    def forward(self, x):
-        return self.conv(x, self.offset(x))
+    def forward(self, x, offset_source=None):
+        """Apply deformable convolution using an optional offset feature.
+
+        The sampled feature remains ``x``.  When ``offset_source`` is
+        provided, temporal context can guide where the current-frame feature
+        is sampled without changing the detector's feature interface.
+        """
+        if offset_source is None:
+            offset_source = x
+        return self.conv(x, self.offset(offset_source))
+
+
+class _TemporalAlign(nn.Module):
+    """Align one adjacent-frame feature to the current-frame coordinates."""
+
+    def __init__(self, channels, kernel_size=3):
+        super(_TemporalAlign, self).__init__()
+        if kernel_size <= 0 or kernel_size % 2 == 0:
+            raise ValueError(
+                'Temporal alignment kernel must be a positive odd integer.')
+        self.offset = nn.Conv2d(
+            channels * 2,
+            2 * kernel_size * kernel_size,
+            kernel_size=3,
+            padding=1,
+            bias=True,
+        )
+        self.conv = _make_deform_conv(
+            channels,
+            channels,
+            kernel_size=kernel_size,
+            groups=channels,
+        )
+
+        # Alignment starts from the regular grid.  The outer DPDF projection
+        # remains zero-initialized, so enabling V2 is still an exact identity
+        # before fine-tuning.
+        nn.init.zeros_(self.offset.weight)
+        nn.init.zeros_(self.offset.bias)
+
+    def forward(self, neighbor, current):
+        offset_source = torch.cat([current, neighbor], dim=1)
+        return self.conv(neighbor, self.offset(offset_source))
 
 
 class _SASPP(nn.Module):
@@ -159,7 +200,8 @@ class DPDFAttention(nn.Module):
     """
 
     def __init__(self, channels=64, heads=4, branch_channels=16,
-                 deform_kernel=5, dilation_rates=(1, 6, 12, 18)):
+                 deform_kernel=5, dilation_rates=(1, 6, 12, 18),
+                 temporal=False, temporal_align=False):
         super(DPDFAttention, self).__init__()
         if deform_kernel <= 0 or deform_kernel % 2 == 0:
             raise ValueError('DPDF deform_kernel must be a positive odd integer.')
@@ -167,6 +209,25 @@ class DPDFAttention(nn.Module):
             raise ValueError('DPDF dilation_rates must be positive integers.')
 
         self.proj1 = nn.Conv2d(channels, channels, kernel_size=1, bias=True)
+        if temporal_align and not temporal:
+            raise ValueError(
+                'Temporal alignment requires temporal DPDF to be enabled.')
+        self.temporal = temporal
+        self.temporal_align = temporal_align
+        if self.temporal:
+            # Current feature plus two adjacent-frame differences.
+            self.temporal_fuse = nn.Sequential(
+                nn.Conv2d(channels * 3, channels, kernel_size=1, bias=True),
+                nn.GELU(),
+            )
+        if self.temporal_align:
+            # The same aligner is shared by the previous and following frame:
+            # both operations map one neighbor into the current coordinates.
+            self.temporal_aligner = _TemporalAlign(channels)
+            self.temporal_value_fuse = nn.Sequential(
+                nn.Conv2d(channels * 3, channels, kernel_size=1, bias=True),
+                nn.GELU(),
+            )
         self.spatial_deform = _DeformConvBranch(
             channels,
             channels,
@@ -184,10 +245,61 @@ class DPDFAttention(nn.Module):
         nn.init.zeros_(self.proj2.weight)
         nn.init.zeros_(self.proj2.bias)
 
-    def forward(self, x):
+    def forward(self, x, temporal_context=None, residual=None):
+        if residual is None:
+            residual = x
         projected = self.activation(self.proj1(x))
-        deformable = self.spatial_deform(projected)
+        deformable = self.spatial_deform(projected, temporal_context)
         spatial_map = self.spatial_project(self.saspp(deformable))
         spatial_refined = projected * torch.sigmoid(spatial_map)
         channel_refined = self.channel_attention(spatial_refined)
-        return x + self.proj2(channel_refined)
+        return residual + self.proj2(channel_refined)
+
+    def forward_sequence(self, chunk):
+        """Refine K frame features with local temporal differences.
+
+        ``chunk`` is a list of K tensors shaped [B,C,H,W].  Boundary frames
+        use replicated neighbors, so the sequence length and detector branch
+        contract remain unchanged.
+        """
+        if not self.temporal:
+            return [self(feature) for feature in chunk]
+        if not chunk:
+            return []
+
+        features = torch.stack(chunk, dim=1)  # [B,K,C,H,W]
+        previous = torch.cat(
+            [features[:, :1], features[:, :-1]], dim=1)
+        following = torch.cat(
+            [features[:, 1:], features[:, -1:]], dim=1)
+
+        batch, steps, channels, height, width = features.shape
+        current = features.reshape(batch * steps, channels, height, width)
+        previous = previous.reshape(batch * steps, channels, height, width)
+        following = following.reshape(batch * steps, channels, height, width)
+
+        temporal_input = torch.cat([
+            current,
+            torch.abs(current - previous),
+            torch.abs(following - current),
+        ], dim=1)
+        temporal_context = self.temporal_fuse(temporal_input)
+        dpdf_input = current
+        if self.temporal_align:
+            aligned_previous = self.temporal_aligner(previous, current)
+            aligned_following = self.temporal_aligner(following, current)
+            dpdf_input = self.temporal_value_fuse(torch.cat([
+                aligned_previous,
+                current,
+                aligned_following,
+            ], dim=1))
+
+        # Keep the detector-facing residual anchored to the current frame.
+        # This preserves exact E0 equivalence for both temporal variants.
+        refined = self.forward(
+            dpdf_input,
+            temporal_context,
+            residual=current,
+        )
+        refined = refined.reshape(batch, steps, channels, height, width)
+        return list(refined.unbind(dim=1))

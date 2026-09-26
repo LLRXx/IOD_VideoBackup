@@ -32,7 +32,9 @@ class STA_Framework(nn.Module):
     def __init__(self, arch, num_layers, branch_info, head_conv, K,
                  use_dpdf=False, dpdf_heads=4, dpdf_branch_channels=16,
                  dpdf_deform_kernel=5,
-                 dpdf_dilation_rates=(1, 6, 12, 18)):
+                 dpdf_dilation_rates=(1, 6, 12, 18),
+                 dpdf_temporal=False,
+                 dpdf_temporal_align=False):
         super(STA_Framework, self).__init__()
         self.K = K
         self.backbone = backbone[arch](num_layers,K)
@@ -45,6 +47,8 @@ class STA_Framework(nn.Module):
                 branch_channels=dpdf_branch_channels,
                 deform_kernel=dpdf_deform_kernel,
                 dilation_rates=dpdf_dilation_rates,
+                temporal=dpdf_temporal,
+                temporal_align=dpdf_temporal_align,
             )
         self.branch = IOD_Branch(self.backbone.output_channel, arch, head_conv, branch_info, K)
         self.R2D  = nn.Sequential(
@@ -55,6 +59,8 @@ class STA_Framework(nn.Module):
     def _refine_chunk(self, chunk):
         if not self.use_dpdf:
             return chunk
+        if self.dpdf.temporal:
+            return self.dpdf.forward_sequence(chunk)
         # One shared DPDF is applied independently to each frame. The
         # temporal backbones have already mixed information across frames;
         # keeping this refinement 2-D preserves the branch's per-frame input

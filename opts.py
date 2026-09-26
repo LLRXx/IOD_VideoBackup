@@ -47,6 +47,10 @@ class opts(object):
                                  help='kernel size of the DPDF pre-SASPP deformable convolution')
         self.parser.add_argument('--dpdf_dilation_rates', default='1,6,12,18',
                                  help='comma-separated SASPP deformable dilation rates')
+        self.parser.add_argument('--dpdf_temporal', action='store_true',
+                                 help='use adjacent-frame differences to guide DPDF offsets')
+        self.parser.add_argument('--dpdf_temporal_align', action='store_true',
+                                 help='align and fuse adjacent-frame values before temporal DPDF')
         self.parser.add_argument('--train_dpdf_only', action='store_true',
                                  help='freeze backbone, detection head and BN; train only DPDF parameters')
         # system settings
@@ -151,6 +155,11 @@ class opts(object):
             self.parser.error('--dpdf_dilation_rates requires four positive integers')
         if opt.train_dpdf_only and not opt.use_dpdf:
             self.parser.error('--train_dpdf_only requires --use_dpdf')
+        if opt.dpdf_temporal and not opt.use_dpdf:
+            self.parser.error('--dpdf_temporal requires --use_dpdf')
+        if opt.dpdf_temporal_align and not opt.dpdf_temporal:
+            self.parser.error(
+                '--dpdf_temporal_align requires --dpdf_temporal')
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv
         elif 'dla' in opt.arch:
