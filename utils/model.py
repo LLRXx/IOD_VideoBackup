@@ -17,7 +17,8 @@ def create_model(arch, branch_info, head_conv, K, use_dpdf=False,
                  dpdf_deform_kernel=5,
                  dpdf_dilation_rates=(1, 6, 12, 18),
                  dpdf_temporal=False,
-                 dpdf_temporal_align=False):
+                 dpdf_temporal_align=False,
+                 dpdf_dynamic_dilation=False):
     num_layers = int(arch[arch.find('_') + 1:]) if '_' in arch else 0
     arch = arch[:arch.find('_')] if '_' in arch else arch
     model = STA_Framework(
@@ -33,6 +34,7 @@ def create_model(arch, branch_info, head_conv, K, use_dpdf=False,
         dpdf_dilation_rates=dpdf_dilation_rates,
         dpdf_temporal=dpdf_temporal,
         dpdf_temporal_align=dpdf_temporal_align,
+        dpdf_dynamic_dilation=dpdf_dynamic_dilation,
     )
     return model
 

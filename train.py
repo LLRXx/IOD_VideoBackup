@@ -95,6 +95,7 @@ def main(opt):
         dpdf_dilation_rates=opt.dpdf_dilation_rates,
         dpdf_temporal=opt.dpdf_temporal,
         dpdf_temporal_align=opt.dpdf_temporal_align,
+        dpdf_dynamic_dilation=opt.dpdf_dynamic_dilation,
     )
     optimizer = None
     start_epoch = opt.start_epoch

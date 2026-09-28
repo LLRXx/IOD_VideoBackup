@@ -51,6 +51,8 @@ class opts(object):
                                  help='use adjacent-frame differences to guide DPDF offsets')
         self.parser.add_argument('--dpdf_temporal_align', action='store_true',
                                  help='align and fuse adjacent-frame values before temporal DPDF')
+        self.parser.add_argument('--dpdf_dynamic_dilation', action='store_true',
+                                 help='dynamically weight SASPP dilation branches using temporal context')
         self.parser.add_argument('--train_dpdf_only', action='store_true',
                                  help='freeze backbone, detection head and BN; train only DPDF parameters')
         # system settings
@@ -160,6 +162,9 @@ class opts(object):
         if opt.dpdf_temporal_align and not opt.dpdf_temporal:
             self.parser.error(
                 '--dpdf_temporal_align requires --dpdf_temporal')
+        if opt.dpdf_dynamic_dilation and not opt.dpdf_temporal:
+            self.parser.error(
+                '--dpdf_dynamic_dilation requires --dpdf_temporal')
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv
         elif 'dla' in opt.arch:

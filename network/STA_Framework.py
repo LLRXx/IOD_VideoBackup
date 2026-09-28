@@ -34,7 +34,8 @@ class STA_Framework(nn.Module):
                  dpdf_deform_kernel=5,
                  dpdf_dilation_rates=(1, 6, 12, 18),
                  dpdf_temporal=False,
-                 dpdf_temporal_align=False):
+                 dpdf_temporal_align=False,
+                 dpdf_dynamic_dilation=False):
         super(STA_Framework, self).__init__()
         self.K = K
         self.backbone = backbone[arch](num_layers,K)
@@ -49,6 +50,7 @@ class STA_Framework(nn.Module):
                 dilation_rates=dpdf_dilation_rates,
                 temporal=dpdf_temporal,
                 temporal_align=dpdf_temporal_align,
+                dynamic_dilation=dpdf_dynamic_dilation,
             )
         self.branch = IOD_Branch(self.backbone.output_channel, arch, head_conv, branch_info, K)
         self.R2D  = nn.Sequential(

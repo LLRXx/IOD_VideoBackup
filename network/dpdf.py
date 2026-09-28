@@ -117,8 +117,11 @@ class _SASPP(nn.Module):
     3x3 and use narrow outputs so the 64-channel detector interface is kept.
     """
 
-    def __init__(self, channels, branch_channels, dilation_rates):
+    def __init__(self, channels, branch_channels, dilation_rates,
+                 dynamic_dilation=False):
         super(_SASPP, self).__init__()
+        self.dynamic_dilation = dynamic_dilation
+        self.num_dilation_branches = len(dilation_rates)
         self.branches = nn.ModuleList([
             _DeformConvBranch(
                 channels,
@@ -128,6 +131,30 @@ class _SASPP(nn.Module):
             )
             for rate in dilation_rates
         ])
+        if self.dynamic_dilation:
+            router_channels = max(channels // 4, 8)
+            self.branch_router = nn.Sequential(
+                nn.Conv2d(
+                    channels * 2,
+                    router_channels,
+                    kernel_size=3,
+                    padding=1,
+                    bias=True,
+                ),
+                nn.GELU(),
+                nn.Conv2d(
+                    router_channels,
+                    self.num_dilation_branches,
+                    kernel_size=1,
+                    bias=True,
+                ),
+            )
+
+            # Zero logits produce uniform softmax weights. Multiplying the
+            # softmax by the branch count then makes every initial branch
+            # multiplier exactly one, matching static SASPP at initialization.
+            nn.init.zeros_(self.branch_router[-1].weight)
+            nn.init.zeros_(self.branch_router[-1].bias)
         self.global_branch = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channels, branch_channels, kernel_size=1, bias=True),
@@ -140,9 +167,22 @@ class _SASPP(nn.Module):
             bias=True,
         )
 
-    def forward(self, x):
+    def forward(self, x, temporal_context=None):
         height, width = x.shape[-2:]
         features = [branch(x) for branch in self.branches]
+        if self.dynamic_dilation:
+            if temporal_context is None:
+                raise ValueError(
+                    'Dynamic dilation requires temporal context.')
+            router_input = torch.cat([x, temporal_context], dim=1)
+            branch_weights = self.branch_router(router_input)
+            branch_weights = F.softmax(branch_weights, dim=1)
+            branch_weights = (
+                branch_weights * self.num_dilation_branches)
+            features = [
+                feature * branch_weights[:, index:index + 1]
+                for index, feature in enumerate(features)
+            ]
         global_feature = self.global_branch(x)
         global_feature = F.interpolate(
             global_feature,
@@ -201,7 +241,8 @@ class DPDFAttention(nn.Module):
 
     def __init__(self, channels=64, heads=4, branch_channels=16,
                  deform_kernel=5, dilation_rates=(1, 6, 12, 18),
-                 temporal=False, temporal_align=False):
+                 temporal=False, temporal_align=False,
+                 dynamic_dilation=False):
         super(DPDFAttention, self).__init__()
         if deform_kernel <= 0 or deform_kernel % 2 == 0:
             raise ValueError('DPDF deform_kernel must be a positive odd integer.')
@@ -212,8 +253,12 @@ class DPDFAttention(nn.Module):
         if temporal_align and not temporal:
             raise ValueError(
                 'Temporal alignment requires temporal DPDF to be enabled.')
+        if dynamic_dilation and not temporal:
+            raise ValueError(
+                'Dynamic dilation requires temporal DPDF to be enabled.')
         self.temporal = temporal
         self.temporal_align = temporal_align
+        self.dynamic_dilation = dynamic_dilation
         if self.temporal:
             # Current feature plus two adjacent-frame differences.
             self.temporal_fuse = nn.Sequential(
@@ -234,7 +279,12 @@ class DPDFAttention(nn.Module):
             kernel_size=deform_kernel,
             groups=channels,
         )
-        self.saspp = _SASPP(channels, branch_channels, dilation_rates)
+        self.saspp = _SASPP(
+            channels,
+            branch_channels,
+            dilation_rates,
+            dynamic_dilation=dynamic_dilation,
+        )
         self.spatial_project = nn.Conv2d(channels, channels, kernel_size=1,
                                          bias=True)
         self.channel_attention = _ChannelMHSA(channels, heads)
@@ -250,7 +300,8 @@ class DPDFAttention(nn.Module):
             residual = x
         projected = self.activation(self.proj1(x))
         deformable = self.spatial_deform(projected, temporal_context)
-        spatial_map = self.spatial_project(self.saspp(deformable))
+        spatial_map = self.spatial_project(
+            self.saspp(deformable, temporal_context))
         spatial_refined = projected * torch.sigmoid(spatial_map)
         channel_refined = self.channel_attention(spatial_refined)
         return residual + self.proj2(channel_refined)

@@ -48,6 +48,8 @@ class Detector(object):
                 dpdf_temporal=getattr(opt, 'dpdf_temporal', False),
                 dpdf_temporal_align=getattr(
                     opt, 'dpdf_temporal_align', False),
+                dpdf_dynamic_dilation=getattr(
+                    opt, 'dpdf_dynamic_dilation', False),
             )
             self.rgb_model = load_model(self.rgb_model, opt.rgb_model)
             self.rgb_model = DataParallel(
