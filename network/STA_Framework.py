@@ -35,12 +35,14 @@ class STA_Framework(nn.Module):
                  dpdf_dilation_rates=(1, 6, 12, 18),
                  dpdf_temporal=False,
                  dpdf_temporal_align=False,
-                 dpdf_dynamic_dilation=False):
+                 dpdf_dynamic_dilation=False,
+                 dpdf_consistency=False):
         super(STA_Framework, self).__init__()
         self.K = K
         self.backbone = backbone[arch](num_layers,K)
         self.arch = arch
         self.use_dpdf = use_dpdf
+        self.dpdf_consistency = dpdf_consistency
         if self.use_dpdf:
             self.dpdf = DPDFAttention(
                 channels=self.backbone.output_channel,
@@ -60,14 +62,28 @@ class STA_Framework(nn.Module):
 
     def _refine_chunk(self, chunk):
         if not self.use_dpdf:
-            return chunk
-        if self.dpdf.temporal:
-            return self.dpdf.forward_sequence(chunk)
+            return chunk, None
+        return_aux = self.training and self.dpdf_consistency
+        if self.dpdf.temporal or return_aux:
+            result = self.dpdf.forward_sequence(
+                chunk,
+                return_aux=return_aux,
+            )
+            if return_aux:
+                return result
+            return result, None
         # One shared DPDF is applied independently to each frame. The
         # temporal backbones have already mixed information across frames;
         # keeping this refinement 2-D preserves the branch's per-frame input
         # contract for wh and STA_offset.
-        return [self.dpdf(feature) for feature in chunk]
+        return [self.dpdf(feature) for feature in chunk], None
+
+    def _forward_branch(self, chunk):
+        chunk, dpdf_aux = self._refine_chunk(chunk)
+        output = self.branch(chunk)
+        if dpdf_aux is not None:
+            output['dpdf_aux'] = dpdf_aux
+        return [output]
 
     def forward(self, input):
         if self.arch == 'I3Dresnet' or self.arch ==  'S3Dresnet' or self.arch =='TAMresnet' or self.arch ==  'MSresnet' or \
@@ -75,18 +91,12 @@ class STA_Framework(nn.Module):
             inputlist = [input[i].unsqueeze(2) for i in range(self.K)]
             input_cat = torch.cat(inputlist, dim=2)# B C T H W
             chunk = self.backbone(input_cat)
-            chunk = self._refine_chunk(chunk)
-            output1 = self.branch(chunk)
-            return [output1]
+            return self._forward_branch(chunk)
         elif  self.arch ==  'TDNresnet':
             #input_cat = torch.cat(input, dim=1)# B C*T  H W
             chunk = self.backbone(input)
-            chunk = self._refine_chunk(chunk)
-            output1 = self.branch(chunk)
-            return [output1]
+            return self._forward_branch(chunk)
         else:
             chunk = [self.backbone(input[i]) for i in range(self.K)]
-            chunk = self._refine_chunk(chunk)
-            output1 = self.branch(chunk)
-            return [output1]
+            return self._forward_branch(chunk)
 

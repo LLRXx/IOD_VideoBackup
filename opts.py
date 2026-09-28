@@ -53,6 +53,16 @@ class opts(object):
                                  help='align and fuse adjacent-frame values before temporal DPDF')
         self.parser.add_argument('--dpdf_dynamic_dilation', action='store_true',
                                  help='dynamically weight SASPP dilation branches using temporal context')
+        self.parser.add_argument('--dpdf_consistency', action='store_true',
+                                 help='enable tube-ROI inter-frame consistency loss for DPDF')
+        self.parser.add_argument('--dpdf_consistency_weight', type=float, default=0.01,
+                                 help='final consistency-loss weight lambda')
+        self.parser.add_argument('--dpdf_consistency_beta', type=float, default=0.25,
+                                 help='relative weight beta of adjacent-frame consistency')
+        self.parser.add_argument('--dpdf_consistency_roi_size', type=int, default=3,
+                                 help='sampling size of each tube ROI used by consistency loss')
+        self.parser.add_argument('--dpdf_consistency_ramp_epochs', type=int, default=2,
+                                 help='epochs used to linearly ramp lambda from zero')
         self.parser.add_argument('--train_dpdf_only', action='store_true',
                                  help='freeze backbone, detection head and BN; train only DPDF parameters')
         # system settings
@@ -165,6 +175,17 @@ class opts(object):
         if opt.dpdf_dynamic_dilation and not opt.dpdf_temporal:
             self.parser.error(
                 '--dpdf_dynamic_dilation requires --dpdf_temporal')
+        if opt.dpdf_consistency and not opt.use_dpdf:
+            self.parser.error('--dpdf_consistency requires --use_dpdf')
+        if opt.dpdf_consistency_weight < 0:
+            self.parser.error('--dpdf_consistency_weight must be non-negative')
+        if opt.dpdf_consistency_beta < 0:
+            self.parser.error('--dpdf_consistency_beta must be non-negative')
+        if opt.dpdf_consistency_roi_size <= 0:
+            self.parser.error('--dpdf_consistency_roi_size must be positive')
+        if opt.dpdf_consistency_ramp_epochs < 0:
+            self.parser.error(
+                '--dpdf_consistency_ramp_epochs must be non-negative')
         if opt.set_head_conv != -1:
             opt.head_conv = opt.set_head_conv
         elif 'dla' in opt.arch:

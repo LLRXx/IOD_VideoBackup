@@ -107,6 +107,147 @@ class RegL1Loss(torch.nn.Module):
         loss = loss / (mask.sum() + 1e-4)
         return loss
 
+
+class TubeROIConsistencyLoss(torch.nn.Module):
+    """Motion-aware consistency over the same tube object across K frames.
+
+    Every frame uses its own ground-truth center and size, so the sampled ROI
+    follows real object translation and scale changes.  The normalized ROI
+    descriptor is matched both to the key frame and to adjacent frames.
+    """
+
+    def __init__(self, roi_size=3, beta=0.25):
+        super(TubeROIConsistencyLoss, self).__init__()
+        self.roi_size = roi_size
+        self.beta = beta
+
+    def _sample_tube_rois(self, sequence, centers, sizes):
+        batch, steps, channels, height, width = sequence.shape
+        num_objects = centers.size(1)
+        relative = torch.linspace(
+            -0.5,
+            0.5,
+            steps=self.roi_size,
+            device=sequence.device,
+            dtype=sequence.dtype,
+        )
+        grid_y, grid_x = torch.meshgrid(relative, relative)
+        grid_x = grid_x.view(1, 1, self.roi_size, self.roi_size)
+        grid_y = grid_y.view(1, 1, self.roi_size, self.roi_size)
+
+        descriptors = []
+        for frame_index in range(steps):
+            frame_centers = centers[:, :, frame_index]
+            frame_sizes = sizes[:, :, frame_index].clamp(min=1.0)
+            sample_x = (
+                frame_centers[:, :, 0, None, None]
+                + frame_sizes[:, :, 0, None, None] * grid_x)
+            sample_y = (
+                frame_centers[:, :, 1, None, None]
+                + frame_sizes[:, :, 1, None, None] * grid_y)
+            sample_x = sample_x.clamp(min=0.0, max=float(width - 1))
+            sample_y = sample_y.clamp(min=0.0, max=float(height - 1))
+
+            if width > 1:
+                sample_x = sample_x * (2.0 / float(width - 1)) - 1.0
+            else:
+                sample_x = torch.zeros_like(sample_x)
+            if height > 1:
+                sample_y = sample_y * (2.0 / float(height - 1)) - 1.0
+            else:
+                sample_y = torch.zeros_like(sample_y)
+
+            grid = torch.stack([sample_x, sample_y], dim=-1)
+            grid = grid.reshape(
+                batch,
+                num_objects * self.roi_size,
+                self.roi_size,
+                2,
+            )
+            sampled = F.grid_sample(
+                sequence[:, frame_index],
+                grid,
+                mode='bilinear',
+                padding_mode='zeros',
+                align_corners=True,
+            )
+            sampled = sampled.reshape(
+                batch,
+                channels,
+                num_objects,
+                self.roi_size,
+                self.roi_size,
+            )
+            descriptor = sampled.mean(dim=(-1, -2)).permute(0, 2, 1)
+            descriptors.append(descriptor)
+
+        descriptors = torch.stack(descriptors, dim=2)
+        return F.normalize(descriptors, p=2, dim=-1, eps=1e-6)
+
+    def forward(self, sequence, center_kpoints, target_wh, mask):
+        if sequence is None:
+            raise ValueError('DPDF consistency requires refined sequence features.')
+        if sequence.dim() != 5:
+            raise ValueError(
+                'Expected DPDF sequence [B,K,C,H,W], got {}.'.format(
+                    tuple(sequence.shape)))
+
+        batch, steps = sequence.shape[:2]
+        if center_kpoints.size(-1) != steps * 2:
+            raise ValueError(
+                'centerKpoints has {} values, but DPDF sequence has {} frames.'
+                .format(center_kpoints.size(-1), steps))
+        if target_wh.size(-1) != steps * 2:
+            raise ValueError(
+                'wh has {} values, but DPDF sequence has {} frames.'.format(
+                    target_wh.size(-1), steps))
+
+        num_objects = center_kpoints.size(1)
+        centers = center_kpoints.reshape(batch, num_objects, steps, 2)
+        sizes = target_wh.reshape(batch, num_objects, steps, 2)
+        centers = centers.to(dtype=sequence.dtype)
+        sizes = sizes.to(dtype=sequence.dtype)
+        descriptors = self._sample_tube_rois(sequence, centers, sizes)
+
+        valid_objects = mask.gt(0)
+        if not bool(valid_objects.any()):
+            zero = sequence.sum() * 0.0
+            return zero, zero, zero
+
+        key_index = steps // 2
+        key_descriptor = descriptors[:, :, key_index].detach()
+        key_cosine = (
+            descriptors * key_descriptor.unsqueeze(2)).sum(dim=-1)
+        key_cosine = key_cosine.clamp(min=-1.0, max=1.0)
+        non_key = torch.ones(
+            steps, dtype=torch.bool, device=sequence.device)
+        non_key[key_index] = False
+        key_mask = valid_objects.unsqueeze(-1) & non_key.view(1, 1, steps)
+        key_loss = ((1.0 - key_cosine) * key_mask.float()).sum()
+        key_loss = key_loss / (key_mask.float().sum() + 1e-4)
+
+        if steps > 1:
+            adjacent_forward = (
+                descriptors[:, :, :-1]
+                * descriptors[:, :, 1:].detach()).sum(dim=-1)
+            adjacent_backward = (
+                descriptors[:, :, 1:]
+                * descriptors[:, :, :-1].detach()).sum(dim=-1)
+            adjacent_cosine = 0.5 * (
+                adjacent_forward + adjacent_backward)
+            adjacent_cosine = adjacent_cosine.clamp(min=-1.0, max=1.0)
+            adjacent_mask = valid_objects.unsqueeze(-1).expand(
+                batch, num_objects, steps - 1)
+            adjacent_loss = (
+                (1.0 - adjacent_cosine) * adjacent_mask.float()).sum()
+            adjacent_loss = adjacent_loss / (
+                adjacent_mask.float().sum() + 1e-4)
+        else:
+            adjacent_loss = sequence.sum() * 0.0
+
+        consistency_loss = key_loss + self.beta * adjacent_loss
+        return consistency_loss, key_loss, adjacent_loss
+
 class STAloss(torch.nn.Module):
     def __init__(self,opt):
         super(STAloss, self).__init__()

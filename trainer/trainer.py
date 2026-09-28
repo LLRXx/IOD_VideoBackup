@@ -3,7 +3,13 @@ from __future__ import division
 from __future__ import print_function
 
 import torch
-from .losses import FocalLoss, RegL1Loss,STAloss,STAloss2
+from .losses import (
+    FocalLoss,
+    RegL1Loss,
+    STAloss,
+    STAloss2,
+    TubeROIConsistencyLoss,
+)
 
 from progress.bar import Bar
 from utils.data_parallel import DataParallel
@@ -19,6 +25,9 @@ class ModleWithLoss(torch.nn.Module):
     def forward(self, batch):
         [output] = self.model(batch['input'])
         loss, loss_stats = self.loss(output, batch)
+        # The auxiliary sequence is needed only while forming the loss.
+        # Do not gather it back to the primary GPU in DataParallel.
+        output.pop('dpdf_aux', None)
         return output, loss, loss_stats
 
 class TrainLoss(torch.nn.Module):
@@ -29,7 +38,30 @@ class TrainLoss(torch.nn.Module):
         self.crit_wh = RegL1Loss()
         self.crit_STAloss = STAloss(opt)
         self.crit_STAloss2 = STAloss2(opt)
+        self.crit_dpdf_consistency = TubeROIConsistencyLoss(
+            roi_size=opt.dpdf_consistency_roi_size,
+            beta=opt.dpdf_consistency_beta,
+        )
         self.opt = opt
+        self.current_epoch = 0
+
+    def set_epoch(self, epoch):
+        self.current_epoch = epoch
+
+    def dpdf_consistency_weight(self):
+        """Return the effective lambda for the current epoch.
+
+        With the default two-epoch ramp this is 0 at epoch 1, 0.5 * lambda
+        at epoch 2 and the configured final lambda from epoch 3 onward.
+        """
+        if not self.opt.dpdf_consistency or not self.training:
+            return 0.0
+        ramp_epochs = self.opt.dpdf_consistency_ramp_epochs
+        if ramp_epochs == 0:
+            return self.opt.dpdf_consistency_weight
+        progress = max(self.current_epoch - 1, 0) / float(ramp_epochs)
+        progress = min(progress, 1.0)
+        return self.opt.dpdf_consistency_weight * progress
 
     def forward(self, output, batch):
         opt = self.opt
@@ -59,18 +91,45 @@ class TrainLoss(torch.nn.Module):
         else:
             loss = opt.hm_weight * hm_loss.mean() + opt.wh_weight * wh_loss.mean() + opt.mov_weight * mov_loss.mean()
 
+        dpdf_cons_loss = loss.new_zeros(())
+        dpdf_cons_key_loss = loss.new_zeros(())
+        dpdf_cons_adj_loss = loss.new_zeros(())
+        consistency_weight = self.dpdf_consistency_weight()
+        if self.opt.dpdf_consistency and self.training:
+            if 'dpdf_aux' not in output:
+                raise RuntimeError(
+                    'DPDF consistency is enabled, but the model did not '
+                    'return training-time DPDF sequence features.')
+            dpdf_cons_loss, dpdf_cons_key_loss, dpdf_cons_adj_loss = (
+                self.crit_dpdf_consistency(
+                    output['dpdf_aux']['refined'],
+                    batch['centerKpoints'],
+                    batch['wh'],
+                    batch['mask'],
+                ))
+            loss = loss + consistency_weight * dpdf_cons_loss
+
         loss = loss.unsqueeze(0)
         hm_loss = hm_loss.unsqueeze(0)
         wh_loss = wh_loss.unsqueeze(0)
         mov_loss = mov_loss.unsqueeze(0)
         sta_sin_loss = sta_sin_loss.mean().unsqueeze(0)
         sta_cos_loss = sta_cos_loss.mean().unsqueeze(0)
+        dpdf_cons_loss = dpdf_cons_loss.unsqueeze(0)
+        dpdf_cons_key_loss = dpdf_cons_key_loss.unsqueeze(0)
+        dpdf_cons_adj_loss = dpdf_cons_adj_loss.unsqueeze(0)
         # sta_sin_loss2 = sta_sin_loss2.mean().unsqueeze(0)
         # sta_cos_loss2 = sta_cos_loss2.mean().unsqueeze(0)
         # print(sta_cos_loss.detach().cpu().numpy(),"==",sta_cos_loss2.detach().cpu().numpy())
         # print(sta_sin_loss.detach().cpu().numpy(),"==",sta_sin_loss2.detach().cpu().numpy())
 
         loss_stats = {'loss': loss, 'hm_loss': hm_loss,'wh_loss': wh_loss,'mov_loss':mov_loss,'sta_sin_loss':sta_sin_loss,'sta_cos_loss':sta_cos_loss}
+        if self.opt.dpdf_consistency:
+            loss_stats.update({
+                'dpdf_cons_loss': dpdf_cons_loss,
+                'dpdf_cons_key_loss': dpdf_cons_key_loss,
+                'dpdf_cons_adj_loss': dpdf_cons_adj_loss,
+            })
 
         return loss, loss_stats
 
@@ -81,6 +140,12 @@ class Trainer(object):
         self.optimizer = optimizer
         self.loss_stats = ['loss', 'hm_loss',  'wh_loss','sta_sin_loss','sta_cos_loss'] if self.opt.loss_option == 'STAloss'\
                     else  ['loss', 'hm_loss',  'wh_loss','mov_loss']
+        if self.opt.dpdf_consistency:
+            self.loss_stats += [
+                'dpdf_cons_loss',
+                'dpdf_cons_key_loss',
+                'dpdf_cons_adj_loss',
+            ]
         self.model_with_loss = ModleWithLoss(model, TrainLoss(opt))
 
     def train(self, epoch, data_loader, writer):
@@ -103,6 +168,18 @@ class Trainer(object):
         else:
             model_with_loss.eval()
             torch.cuda.empty_cache()
+
+        underlying_model = (
+            model_with_loss.module
+            if hasattr(model_with_loss, 'module')
+            else model_with_loss)
+        underlying_model.loss.set_epoch(epoch)
+        if phase == 'train' and self.opt.dpdf_consistency:
+            print(
+                'DPDF consistency: lambda={:.6f}, beta={:.6f}'.format(
+                    underlying_model.loss.dpdf_consistency_weight(),
+                    self.opt.dpdf_consistency_beta,
+                ))
 
         opt = self.opt
         avg_loss_stats = {l: AverageMeter() for l in self.loss_stats}

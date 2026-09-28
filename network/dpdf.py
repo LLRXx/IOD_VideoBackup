@@ -306,17 +306,25 @@ class DPDFAttention(nn.Module):
         channel_refined = self.channel_attention(spatial_refined)
         return residual + self.proj2(channel_refined)
 
-    def forward_sequence(self, chunk):
+    def forward_sequence(self, chunk, return_aux=False):
         """Refine K frame features with local temporal differences.
 
         ``chunk`` is a list of K tensors shaped [B,C,H,W].  Boundary frames
         use replicated neighbors, so the sequence length and detector branch
         contract remain unchanged.
         """
-        if not self.temporal:
-            return [self(feature) for feature in chunk]
         if not chunk:
+            if return_aux:
+                return [], {'refined': None}
             return []
+
+        if not self.temporal:
+            refined_chunk = [self(feature) for feature in chunk]
+            if return_aux:
+                return refined_chunk, {
+                    'refined': torch.stack(refined_chunk, dim=1),
+                }
+            return refined_chunk
 
         features = torch.stack(chunk, dim=1)  # [B,K,C,H,W]
         previous = torch.cat(
@@ -353,4 +361,7 @@ class DPDFAttention(nn.Module):
             residual=current,
         )
         refined = refined.reshape(batch, steps, channels, height, width)
-        return list(refined.unbind(dim=1))
+        refined_chunk = list(refined.unbind(dim=1))
+        if return_aux:
+            return refined_chunk, {'refined': refined}
+        return refined_chunk
