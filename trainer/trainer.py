@@ -146,6 +146,15 @@ class Trainer(object):
                 'dpdf_cons_key_loss',
                 'dpdf_cons_adj_loss',
             ]
+        # Keep the complete loss set for TensorBoard and epoch summaries, but
+        # keep the terminal progress bar focused on the total and DPDF terms.
+        self.display_loss_stats = ['loss']
+        if self.opt.dpdf_consistency:
+            self.display_loss_stats += [
+                'dpdf_cons_loss',
+                'dpdf_cons_key_loss',
+                'dpdf_cons_adj_loss',
+            ]
         self.model_with_loss = ModleWithLoss(model, TrainLoss(opt))
 
     def train(self, epoch, data_loader, writer):
@@ -211,6 +220,9 @@ class Trainer(object):
 
             step = iter // opt.visual_per_inter + num_iters // opt.visual_per_inter * (epoch - 1)
 
+            # Update and log every loss, including the hidden baseline
+            # components.  They remain available in TensorBoard and the
+            # epoch logger even though they are omitted from the progress bar.
             for l in self.loss_stats:
                 avg_loss_stats[l].update(
                     loss_stats[l].mean().item(), batch['input'][0].size(0))
@@ -218,6 +230,8 @@ class Trainer(object):
                 if phase == 'train' and iter % opt.visual_per_inter == 0 and iter != 0:
                     writer.add_scalar('train/{}'.format(l), avg_loss_stats[l].avg, step)
                     writer.flush()
+
+            for l in self.display_loss_stats:
                 Bar.suffix = Bar.suffix + '|{} {:.4f} '.format(l, avg_loss_stats[l].avg)
             bar.next()
             del output, loss, loss_stats
