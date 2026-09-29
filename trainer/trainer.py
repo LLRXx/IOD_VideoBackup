@@ -167,10 +167,11 @@ class Trainer(object):
         model_with_loss = self.model_with_loss
         if phase == 'train':
             model_with_loss.train()
-            if self.opt.train_dpdf_only:
-                # train() recursively switches frozen BatchNorm layers back
-                # to train mode; restore eval mode so their running statistics
-                # remain identical to the official baseline.
+            if self.opt.train_dpdf_only or self.opt.freeze_bn_stats:
+                # train() recursively switches BatchNorm layers back to train
+                # mode.  Restore eval mode when the experiment requests fixed
+                # running statistics.  Affine BN parameters can still receive
+                # gradients unless the caller froze their requires_grad flags.
                 for module in model_with_loss.modules():
                     if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
                         module.eval()

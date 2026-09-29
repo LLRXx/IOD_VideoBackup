@@ -64,6 +64,51 @@ def configure_dpdf_only_training(model):
     return trainable_names
 
 
+def create_optimizer(model, opt):
+    """Create optimizer groups for joint fine-tuning.
+
+    The inserted DPDF is allowed to move faster than the pretrained backbone,
+    while the fusion/detection head uses an intermediate rate.  Parameter
+    names are grouped by the model modules registered by STA_Framework.
+    """
+    lr_backbone = opt.lr if opt.lr_backbone < 0 else opt.lr_backbone
+    lr_dpdf = opt.lr if opt.lr_dpdf < 0 else opt.lr_dpdf
+    lr_head = opt.lr if opt.lr_head < 0 else opt.lr_head
+
+    grouped = {
+        'backbone': {'params': [], 'lr': lr_backbone},
+        'dpdf': {'params': [], 'lr': lr_dpdf},
+        'head': {'params': [], 'lr': lr_head},
+    }
+    grouped_names = {key: [] for key in grouped}
+
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if name.split('.')[0] == 'dpdf':
+            group_name = 'dpdf'
+        elif name.split('.')[0] == 'backbone':
+            group_name = 'backbone'
+        else:
+            group_name = 'head'
+        grouped[group_name]['params'].append(parameter)
+        grouped_names[group_name].append(name)
+
+    param_groups = []
+    for group_name in ('backbone', 'dpdf', 'head'):
+        group = grouped[group_name]
+        if group['params']:
+            group['name'] = group_name
+            group['initial_lr'] = group['lr']
+            param_groups.append(group)
+            print('Optimizer group {}: {} parameters, lr={}'.format(
+                group_name, len(grouped_names[group_name]), group['lr']))
+
+    if not param_groups:
+        raise RuntimeError('No trainable parameters were found for the optimizer.')
+    return torch.optim.Adam(param_groups)
+
+
 def main(opt):
     set_seed(opt.seed)
     torch.backends.cudnn.benchmark = True
@@ -123,9 +168,9 @@ def main(opt):
             optimizer_parameters = (
                 parameter for parameter in model.parameters()
                 if parameter.requires_grad)
-            optimizer = torch.optim.Adam(optimizer_parameters, opt.lr)
+            optimizer = torch.optim.Adam(optimizer_parameters, opt.lr_dpdf if opt.lr_dpdf > 0 else opt.lr)
         else:
-            optimizer = torch.optim.Adam(model.parameters(), opt.lr)
+            optimizer = create_optimizer(model, opt)
 
     #Trainer Class
     trainer = Trainer(opt, model, optimizer)
@@ -191,10 +236,9 @@ def main(opt):
 
         #decrese the learning rate
         if epoch in opt.lr_step:
-            lr = opt.lr * (0.1 ** (opt.lr_step.index(epoch) + 1))
-            logger.write('Drop LR to ' + str(lr) + '\n')
+            logger.write('Drop optimizer learning rates by 0.1\n')
             for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
+                param_group['lr'] *= 0.1
 
     logger.close()
 

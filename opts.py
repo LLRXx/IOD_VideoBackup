@@ -78,6 +78,12 @@ class opts(object):
         # learning rate settings
         self.parser.add_argument('--lr', type=float, default=5e-4,
                                  help='learning rate for batch size 32.')
+        self.parser.add_argument('--lr_backbone', type=float, default=-1,
+                                 help='backbone learning rate; -1 uses --lr')
+        self.parser.add_argument('--lr_dpdf', type=float, default=-1,
+                                 help='DPDF learning rate; -1 uses --lr')
+        self.parser.add_argument('--lr_head', type=float, default=-1,
+                                 help='fusion/head learning rate; -1 uses --lr')
         self.parser.add_argument('--lr_step', type=str, default='6,8',
                                  help='drop learning rate by 10.')
         self.parser.add_argument('--num_epochs', type=int, default=30,
@@ -115,6 +121,8 @@ class opts(object):
                                  help='strat epoch, used for recover experiment')
         self.parser.add_argument('--pin_memory', action='store_true',
                                  help='set pin_memory True')
+        self.parser.add_argument('--freeze_bn_stats', action='store_true',
+                                 help='keep BatchNorm running statistics fixed while allowing affine parameters to train')
 
         # loss ratio settings
         self.parser.add_argument('--hm_weight', type=float, default=1,
@@ -154,6 +162,14 @@ class opts(object):
         opt.gpus = [int(gpu) for gpu in opt.gpus.split(',')]
         opt.gpus = [i for i in range(len(opt.gpus))] if opt.gpus[0] >= 0 else [-1]
         opt.lr_step = [int(i) for i in opt.lr_step.split(',')]
+        for lr_name in ('lr', 'lr_backbone', 'lr_dpdf', 'lr_head'):
+            lr_value = getattr(opt, lr_name)
+            if lr_name == 'lr':
+                valid = lr_value > 0
+            else:
+                valid = lr_value == -1 or lr_value > 0
+            if not valid:
+                self.parser.error('--{} must be positive or -1'.format(lr_name))
         opt.dpdf_dilation_rates = tuple(
             int(rate) for rate in opt.dpdf_dilation_rates.split(','))
         if opt.dpdf_heads <= 0 or 64 % opt.dpdf_heads != 0:
